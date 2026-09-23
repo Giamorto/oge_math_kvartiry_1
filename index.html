@@ -517,6 +517,44 @@
     return out;
   }
 
+  // window openings are real holes cut into the wall geometry (not just a
+  // decorative plane sat in front of a solid wall), so the glass is actually
+  // see-through. This figures out, for every window on the plan, exactly
+  // which stretch of wall (axis/fixed line + cell range) and which vertical
+  // band (sill to head height) needs to come out.
+  var WINDOW_SILL = 1.5 - 1.15/2; // 0.925 — matches the window size used throughout
+  var WINDOW_HEAD = 1.5 + 1.15/2; // 2.075
+  function computeWindowCutouts(v){
+    var cutouts = [];
+    v.rooms.forEach(function(r){
+      if(!r.window) return;
+      var edges = exteriorEdges(r, v.gridW, v.gridH);
+      if(!edges.length) return;
+      var chosen;
+      if(r.windowSide){
+        chosen = edges.filter(function(e){ return e.side === r.windowSide; });
+        if(!chosen.length) chosen = [edges[0]];
+      } else {
+        edges.sort(function(a,b){ return b.len-a.len; });
+        chosen = [edges[0]];
+      }
+      chosen.forEach(function(ed){
+        var wf = r.windowSpan ? r.windowSpan[0] : ed.from;
+        var wt = r.windowSpan ? r.windowSpan[1] : ed.to;
+        var axis = (ed.side === 'top' || ed.side === 'bottom') ? 'h' : 'v';
+        var fixed = (ed.side === 'top') ? 0 : (ed.side === 'bottom') ? v.gridH : (ed.side === 'left') ? 0 : v.gridW;
+        cutouts.push({ axis:axis, fixed:fixed, from:wf, to:wt, yFrom:WINDOW_SILL, yTo:WINDOW_HEAD, side:ed.side });
+      });
+    });
+    // interior glazed panel between the loggia and the bedroom — present on the
+    // reference plan but previously left as solid wall behind a decorative plane
+    var loggiaRoom = v.rooms.filter(function(r){ return r.type === 'loggia'; })[0];
+    if(loggiaRoom){
+      cutouts.push({ axis:'h', fixed:loggiaRoom.y1, from:14, to:16, yFrom:1.1, yTo:2.0, side:'interior' });
+    }
+    return cutouts;
+  }
+
   // ---------- Three.js scaffolding ----------
   var canvas = document.getElementById('scene');
   var renderer = new THREE.WebGLRenderer({ canvas:canvas, antialias:true });
@@ -526,7 +564,26 @@
   renderer.toneMappingExposure = 1.05;
 
   var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0c0d11);
+
+  // soft daytime sky gradient behind the apartment, visible through the now-
+  // transparent windows — a simple vertical CanvasTexture, same technique as
+  // the other procedural textures below
+  function makeSkyTexture(){
+    var w = 8, h = 256;
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var ctx = c.getContext('2d');
+    var g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0,    '#bfe3f7');
+    g.addColorStop(0.55, '#dff0f4');
+    g.addColorStop(1,    '#f3ead9');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    var tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    return tex;
+  }
+  scene.background = makeSkyTexture();
+  scene.fog = new THREE.Fog(0xdff0f4, 14, 46); // fades the distant skyline into the sky, cheap depth cue
 
   var camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.05, 100);
 
@@ -754,7 +811,11 @@
   // already 0.9-1) so the specular difference Lambert gives up is essentially invisible here.
   var wallMat = new THREE.MeshLambertMaterial({ color:0x4a4944 });
   var ceilMat = new THREE.MeshLambertMaterial({ color:0xaaaaa6, side:THREE.DoubleSide });
-  var winMat  = new THREE.MeshBasicMaterial({ color:0x6cbdea, side:THREE.DoubleSide });
+  // real glass now that windows are actual holes in the wall (see
+  // computeWindowCutouts) — a light tint plus some transparency, so it still
+  // reads as glass rather than an empty rectangle, while the sky/skyline
+  // beyond genuinely shows through
+  var winMat  = new THREE.MeshBasicMaterial({ color:0x4fa8e0, transparent:true, opacity:0.4, depthWrite:false, side:THREE.DoubleSide });
 
   var collisionBoxes = [];
   var gridOverlayMat = null;
@@ -856,25 +917,59 @@
 
     // walls + collision boxes
     collisionBoxes = [];
+    var windowCutouts = computeWindowCutouts(v);
+
+    // builds one solid wall box over [from,to] x [yFrom,yTo] — the piece
+    // size shrinks to fit around any window cutout in the segment below
+    function addWallBox(axis, fixed, from, to, yFrom, yTo){
+      var len = (to - from) * CELL, h = yTo - yFrom;
+      if(len <= 0.001 || h <= 0.001) return;
+      var geo, mesh;
+      if(axis === 'h'){
+        geo = new THREE.BoxGeometry(len, h, WALL_T);
+        mesh = new THREE.Mesh(geo, wallMat);
+        mesh.position.set((from+to)/2*CELL, yFrom + h/2, fixed*CELL);
+      } else {
+        geo = new THREE.BoxGeometry(WALL_T, h, len);
+        mesh = new THREE.Mesh(geo, wallMat);
+        mesh.position.set(fixed*CELL, yFrom + h/2, (from+to)/2*CELL);
+      }
+      group.add(mesh);
+    }
+
     built.segs.forEach(function(seg){
       var len = (seg.to - seg.from) * CELL;
       if(len <= 0.001) return;
-      var geo, mesh, minX,maxX,minZ,maxZ;
+      var minX,maxX,minZ,maxZ;
       if(seg.axis === 'h'){
-        geo = new THREE.BoxGeometry(len, WALL_H, WALL_T);
-        mesh = new THREE.Mesh(geo, wallMat);
-        mesh.position.set((seg.from+seg.to)/2*CELL, WALL_H/2, seg.fixed*CELL);
         minX = seg.from*CELL; maxX = seg.to*CELL;
         minZ = seg.fixed*CELL - WALL_T/2; maxZ = seg.fixed*CELL + WALL_T/2;
       } else {
-        geo = new THREE.BoxGeometry(WALL_T, WALL_H, len);
-        mesh = new THREE.Mesh(geo, wallMat);
-        mesh.position.set(seg.fixed*CELL, WALL_H/2, (seg.from+seg.to)/2*CELL);
         minX = seg.fixed*CELL - WALL_T/2; maxX = seg.fixed*CELL + WALL_T/2;
         minZ = seg.from*CELL; maxZ = seg.to*CELL;
       }
-      group.add(mesh);
+      // collision still uses the FULL original wall footprint regardless of
+      // any window hole — a window is above head height, not something you
+      // could climb through, so the floor-level collision stays solid
       collisionBoxes.push({minX:minX,maxX:maxX,minZ:minZ,maxZ:maxZ});
+
+      var matches = windowCutouts.filter(function(w){
+        return w.axis===seg.axis && w.fixed===seg.fixed && w.from < seg.to-0.001 && w.to > seg.from+0.001;
+      }).sort(function(a,b){ return a.from-b.from; });
+
+      if(!matches.length){
+        addWallBox(seg.axis, seg.fixed, seg.from, seg.to, 0, WALL_H);
+        return;
+      }
+      var cursor = seg.from;
+      matches.forEach(function(cut){
+        var cf = Math.max(seg.from, cut.from), ct = Math.min(seg.to, cut.to);
+        if(cf > cursor) addWallBox(seg.axis, seg.fixed, cursor, cf, 0, WALL_H);
+        addWallBox(seg.axis, seg.fixed, cf, ct, 0, cut.yFrom);       // sill
+        addWallBox(seg.axis, seg.fixed, cf, ct, cut.yTo, WALL_H);    // header
+        cursor = Math.max(cursor, ct);
+      });
+      if(cursor < seg.to) addWallBox(seg.axis, seg.fixed, cursor, seg.to, 0, WALL_H);
     });
 
     // wood-coloured door frames on every interior doorway, so openings read clearly as doors
@@ -915,23 +1010,9 @@
     }
     built.doorGaps.forEach(function(g){ addInteriorDoorFrame(g.axis, g.fixed, g.ds, g.de); });
 
-    // interior glazed panel between loggia and bedroom, present on the reference plan but
-    // previously left as plain wall — a real window, present from the start (unlike the
-    // tile-problem props below, which only appear once task 2 begins)
-    var loggiaRoom = v.rooms.filter(function(r){ return r.type === 'loggia'; })[0];
-    if(loggiaRoom){
-      var lwWallZ = loggiaRoom.y1*CELL; // loggia/bedroom shared wall
-      var lw0 = 14, lw1 = 16; // measured off the plan (cells)
-      var lwLen = (lw1-lw0)*CELL - 0.06;
-      var lwMid = (lw0+lw1)/2*CELL;
-      var lwOff = WALL_T/2 + 0.015;
-      [1, -1].forEach(function(dir){
-        var lwGeo = new THREE.PlaneGeometry(lwLen, 0.9);
-        var lwMesh = new THREE.Mesh(lwGeo, winMat);
-        lwMesh.position.set(lwMid, 1.55, lwWallZ + dir*lwOff);
-        group.add(lwMesh);
-      });
-    }
+    // (the loggia/bedroom glazed panel is now a real cutout — see
+    // computeWindowCutouts and the glass-plane pass below, alongside the
+    // exterior windows, instead of a decorative plane bolted onto solid wall)
 
     // entrance vestibule — a short stub of building corridor outside the front door
     if(v.entrance){
@@ -1017,7 +1098,7 @@
       group.add(cellPlaque);
     }
 
-    // windows + number sprites + room lights
+    // number sprites + room lights
     v.rooms.forEach(function(r){
       var cx = (r.x0+r.x1)/2*CELL, cz = (r.y0+r.y1)/2*CELL;
 
@@ -1040,46 +1121,50 @@
         light.position.set(cx, WALL_H-0.25, cz);
         group.add(light);
       }
-
-      if(r.window){
-        var edges = exteriorEdges(r, v.gridW, v.gridH);
-        if(edges.length){
-          var chosen;
-          if(r.windowSide){
-            chosen = edges.filter(function(e){ return e.side === r.windowSide; });
-            if(!chosen.length) chosen = [edges[0]];
-          } else {
-            edges.sort(function(a,b){ return b.len-a.len; });
-            chosen = [edges[0]];
-          }
-          chosen.forEach(function(ed){
-            // windowSpan lets a room's window be narrower than the wall it's on
-            // (measured off the reference plan), instead of spanning the whole wall
-            var wf = r.windowSpan ? r.windowSpan[0] : ed.from;
-            var wt = r.windowSpan ? r.windowSpan[1] : ed.to;
-            var segLen = (wt-wf)*CELL - 0.12;
-            var mid = (wf+wt)/2*CELL;
-            var off = WALL_T/2 + 0.015; // sit just in front of the wall's inner face, not buried inside it
-            var wGeo, wMesh;
-            if(ed.side==='top' || ed.side==='bottom'){
-              wGeo = new THREE.PlaneGeometry(segLen, 1.15);
-              wMesh = new THREE.Mesh(wGeo, winMat);
-              var zPos = ed.side==='top' ? off : v.gridH*CELL - off;
-              wMesh.position.set(mid, 1.5, zPos);
-              wMesh.rotation.y = 0;
-            } else {
-              wGeo = new THREE.PlaneGeometry(segLen, 1.15);
-              wMesh = new THREE.Mesh(wGeo, winMat);
-              var xPos = ed.side==='left' ? off : v.gridW*CELL - off;
-              wMesh.position.set(xPos, 1.5, mid);
-              wMesh.rotation.y = Math.PI/2;
-            }
-            wMesh.renderOrder = 2;
-            group.add(wMesh);
-          });
-        }
-      }
     });
+
+    // one glass plane per window cutout (exterior windows and the interior
+    // loggia/bedroom panel alike), sitting right in the middle of the hole
+    // now cut into the wall — see computeWindowCutouts
+    windowCutouts.forEach(function(cut){
+      var segLen = (cut.to-cut.from)*CELL - 0.06;
+      var mid = (cut.from+cut.to)/2*CELL;
+      var yMid = (cut.yFrom+cut.yTo)/2;
+      var wGeo = new THREE.PlaneGeometry(segLen, cut.yTo-cut.yFrom);
+      var wMesh = new THREE.Mesh(wGeo, winMat);
+      if(cut.axis === 'h'){
+        wMesh.position.set(mid, yMid, cut.fixed*CELL);
+      } else {
+        wMesh.position.set(cut.fixed*CELL, yMid, mid);
+        wMesh.rotation.y = Math.PI/2;
+      }
+      wMesh.renderOrder = 2;
+      group.add(wMesh);
+    });
+
+    // a few simple distant silhouettes beyond the north-facing exterior
+    // windows (kitchen/living/loggia all face that way), so there's
+    // something out there besides flat sky — cheap boxes, fog fades them
+    // into the background with distance
+    (function addSkyline(){
+      var skylineMat1 = new THREE.MeshLambertMaterial({ color:0x9fb0c2 });
+      var skylineMat2 = new THREE.MeshLambertMaterial({ color:0xb7c6d6 });
+      var skylineMat3 = new THREE.MeshLambertMaterial({ color:0xcfdae4 });
+      var cxAll = v.gridW*CELL/2;
+      var buildings = [
+        { x:cxAll-9,  z:-9,  w:3.2, d:3.2, h:9,  mat:skylineMat1 },
+        { x:cxAll-3,  z:-13, w:4.0, d:4.0, h:14, mat:skylineMat2 },
+        { x:cxAll+3,  z:-10, w:3.0, d:3.0, h:7,  mat:skylineMat1 },
+        { x:cxAll+9,  z:-16, w:5.0, d:5.0, h:17, mat:skylineMat3 },
+        { x:cxAll+15, z:-11, w:3.4, d:3.4, h:10, mat:skylineMat2 },
+        { x:cxAll-15, z:-12, w:3.6, d:3.6, h:11, mat:skylineMat3 }
+      ];
+      buildings.forEach(function(b){
+        var mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), b.mat);
+        mesh.position.set(b.x, b.h/2, b.z);
+        scene.add(mesh);
+      });
+    })();
 
     scene.add(group);
 
