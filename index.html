@@ -57,13 +57,6 @@
   #app{ position:fixed; inset:0; height:100%; width:100%; }
   #scene{ position:absolute; inset:0; display:block; width:100%; height:100%; outline:none; cursor:crosshair; }
 
-  #crosshair{
-    position:absolute; top:50%; left:50%; width:8px; height:8px; margin:-4px;
-    border-radius:50%; background:#fff; mix-blend-mode:difference; pointer-events:none;
-    opacity:0; transition:opacity .2s;
-  }
-  #crosshair.on{ opacity:.85; }
-
   #interactPrompt{
     position:absolute; top:calc(50% + 34px); left:50%; transform:translateX(-50%);
     font-family:Arial, Helvetica, sans-serif; font-size:12.5px; letter-spacing:.01em;
@@ -76,6 +69,15 @@
     display:inline-block; background:var(--accent); color:var(--accent-ink);
     font-family:inherit; font-weight:700; border-radius:5px; padding:1px 6px; margin-right:6px;
   }
+
+  #resumeHint{
+    position:absolute; top:calc(50% + 34px); left:50%; transform:translateX(-50%);
+    font-family:Arial, Helvetica, sans-serif; font-size:12.5px; letter-spacing:.01em;
+    background:rgba(20,17,10,.72); color:#f3ead9; border:1px solid rgba(255,255,255,.16);
+    border-radius:999px; padding:7px 14px; white-space:nowrap;
+    pointer-events:none; opacity:0; transition:opacity .15s;
+  }
+  #resumeHint.on{ opacity:1; }
 
   #toast{
     position:absolute; top:calc(50% + 130px); left:50%; transform:translate(-50%, 4px);
@@ -216,6 +218,7 @@
   .btn--secondary{ background:var(--ink); color:var(--paper); width:100%; margin-top:14px; }
   .btn--secondary:hover{ filter:brightness(1.15); }
   #restartBtn{ width:100%; margin-top:14px; }
+  #skipTask1Btn, #skipTask2Btn, #skipExtraTaskBtn{ width:100%; margin-top:14px; }
 
   .task-plan-img{
     display:block; width:100%; max-width:320px; margin:0 auto 16px;
@@ -289,8 +292,8 @@
 
 <div id="app">
   <canvas id="scene"></canvas>
-  <div id="crosshair"></div>
   <div id="interactPrompt"></div>
+  <div id="resumeHint">Возвращаемся в игру…</div>
   <div id="toast" aria-live="polite"></div>
 
   <div id="minimap">
@@ -338,6 +341,7 @@
       </div>
       <button id="restartBtn" class="btn btn--ghost" type="button" hidden>Начать заново</button>
       <button id="nextTaskBtn" class="btn btn--primary" type="button" hidden>Далее: задача 2 →</button>
+      <button id="skipTask1Btn" class="btn btn--ghost" type="button">Пропустить задачу</button>
       <button id="resumeBtn" class="btn btn--secondary" type="button">Продолжить прогулку</button>
     </div>
   </div>
@@ -353,6 +357,7 @@
         <input id="packInput" type="number" min="1" max="40" step="1" />
         <button id="orderBtn" class="btn btn--primary" type="button">Заказать</button>
       </div>
+      <button id="skipTask2Btn" class="btn btn--ghost" type="button">Пропустить задачу</button>
     </div>
   </div>
 
@@ -373,6 +378,7 @@
         <span id="extraTaskResult" class="result-msg" role="status"></span>
       </div>
       <button id="extraTaskNextBtn" class="btn btn--primary" type="button" hidden>Далее →</button>
+      <button id="skipExtraTaskBtn" class="btn btn--ghost" type="button">Пропустить задачу</button>
       <button id="extraTaskResumeBtn" class="btn btn--secondary" type="button">Продолжить</button>
     </div>
   </div>
@@ -1166,12 +1172,12 @@
   // ---------- Toast notifications (below screen centre) ----------
   var toastEl = document.getElementById('toast');
   var toastTimer = null;
-  function showToast(text){
+  function showToast(text, duration){
     if(!toastEl) return;
     toastEl.textContent = text;
     toastEl.classList.add('on');
     if(toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, 2600);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, duration || 2600);
   }
 
   // ---------- Task 2 scene: sign, tile-sample plaque, demo tile, tile packs ----------
@@ -1336,15 +1342,23 @@
   // that's the "field is right there on the wall" behaviour that was asked for
   function openOrderPanel(){
     document.getElementById('task2Overlay').hidden = false;
+    // once packs are already ordered, reopening this panel (e.g. via ESC while
+    // laying tiles) should just recap the task, not offer to order again —
+    // ordering twice would duplicate the packs already placed
+    var orderRow = document.querySelector('#task2Overlay .order-row');
+    if(orderRow) orderRow.style.display = orderedPacks > 0 ? 'none' : '';
     taskPanelOpen = true;
-    if(document.pointerLockElement === canvas) document.exitPointerLock();
+    exitPointerLockForMenu();
+    updateResumeHint();
   }
 
-  // Esc cancels the order form without ordering — walk back to the sign to reopen it
+  // Esc cancels the order form without ordering — walk back to the sign to
+  // reopen it. Closing tries to resume gameplay right away — see
+  // attemptRelock() for why it isn't a plain requestPointerLock() call.
   function closeOrderPanel(){
     document.getElementById('task2Overlay').hidden = true;
     taskPanelOpen = false;
-    if(playing) canvas.requestPointerLock();
+    attemptRelock();
   }
 
   function submitTileOrder(){
@@ -1359,7 +1373,7 @@
     spawnPacks(val);
     document.getElementById('task2Overlay').hidden = true;
     taskPanelOpen = false;
-    if(playing) canvas.requestPointerLock();
+    attemptRelock();
     showToast('Заказ отправлен — теперь положите плитку');
     playNotifySound();
   }
@@ -1489,27 +1503,92 @@
   });
   document.addEventListener('keyup', function(e){ keys[e.code] = false; });
 
+  // Closing a task menu — by ESC, by "Продолжить прогулку", or by the ×
+  // button — all do exactly the same thing: hide the panel and immediately
+  // try to re-lock the pointer. That immediate attempt usually just works
+  // (same as clicking the button does). The only wrinkle is Chrome's own
+  // anti-"trapped cursor" rule: right after the browser's own Escape
+  // gesture releases the pointer, a re-lock attempt can get silently
+  // refused for a brief moment. Rather than treating ESC specially or
+  // pre-guessing how long that lasts, we just try immediately every time
+  // and, only if refused, quietly retry a few times in the background —
+  // no click required, no special-casing which control triggered the close.
+  var relockTimer = null;
+  var relockAttempts = 0;
+  var MAX_RELOCK_ATTEMPTS = 20; // safety cap so a genuinely stuck case doesn't retry forever
+
+  // every place that exits pointer lock to open a menu should go through
+  // this instead of calling document.exitPointerLock() directly, so any
+  // relock attempt still pending from a previous close gets cancelled
+  function exitPointerLockForMenu(){
+    if(relockTimer){ clearTimeout(relockTimer); relockTimer = null; }
+    if(document.pointerLockElement === canvas){
+      document.exitPointerLock();
+    }
+  }
+
+  // small "one moment" hint, shown only if an immediate re-lock attempt
+  // gets refused and we're quietly retrying — purely informational, never
+  // asks the player to click anything
+  function updateResumeHint(){
+    var show = playing && !locked && !taskPanelOpen;
+    document.getElementById('resumeHint').classList.toggle('on', show);
+  }
+
+  // resumes gameplay: tries to re-lock right now, exactly like clicking
+  // "Продолжить прогулку" or the × does. If Chrome refuses it, the
+  // pointerlockerror handler below keeps retrying quietly every ~200ms
+  // until it succeeds — no click required either way.
+  function attemptRelock(){
+    if(!playing || taskPanelOpen || document.pointerLockElement === canvas) { updateResumeHint(); return; }
+    if(relockTimer) return;
+    relockAttempts = 0;
+    canvas.requestPointerLock();
+  }
+
   canvas.addEventListener('click', function(){
-    if(playing && !taskPanelOpen && document.pointerLockElement !== canvas){
-      canvas.requestPointerLock();
+    attemptRelock();
+  });
+
+  document.addEventListener('pointerlockerror', function(){
+    relockTimer = null;
+    relockAttempts++;
+    if(playing && !taskPanelOpen && document.pointerLockElement !== canvas && relockAttempts < MAX_RELOCK_ATTEMPTS){
+      updateResumeHint();
+      relockTimer = setTimeout(function(){
+        relockTimer = null;
+        if(playing && !taskPanelOpen && document.pointerLockElement !== canvas){
+          canvas.requestPointerLock();
+        }
+      }, 200); // still refused — keep trying quietly, no click needed
+    } else {
+      updateResumeHint();
     }
   });
 
   document.addEventListener('pointerlockchange', function(){
     locked = (document.pointerLockElement === canvas);
-    document.getElementById('crosshair').classList.toggle('on', locked);
     document.getElementById('hud').classList.toggle('on', playing);
     document.getElementById('minimap').classList.toggle('on', playing);
-    // pressing ESC always brings back whichever task is currently "open":
-    // task 1 while it's unsolved, or the current задача 3-5 overlay once that
-    // chain has started but isn't finished yet — same pattern as task 1 itself
+    // pressing ESC always brings back whichever task is currently "open" —
+    // task 1 while it's unsolved, task 2's panel while ordering/laying tiles,
+    // or the current задача 3-5 overlay once that chain has started but isn't
+    // finished yet. This way ESC never just frees the mouse with nothing to
+    // show — it always opens the relevant task menu, right away.
     if(!locked && playing && !taskPanelOpen){
       if(!lastAllCorrect){
         openTaskPanel();
+      } else if(!task2Solved){
+        openOrderPanel();
       } else if(currentExtraTaskIndex >= 0 && !extraTasksDone){
         reopenExtraTask();
+      } else {
+        // nothing left to show (e.g. every task already finished) — still
+        // resume gameplay automatically instead of leaving the hint hanging
+        attemptRelock();
       }
     }
+    updateResumeHint();
   });
 
   document.addEventListener('mousemove', function(e){
@@ -1532,6 +1611,8 @@
   var resultMsg = document.getElementById('resultMsg');
   var restartBtn = document.getElementById('restartBtn');
   var nextTaskBtn = document.getElementById('nextTaskBtn');
+  var skipTask1Btn = document.getElementById('skipTask1Btn');
+  var skipTask2Btn = document.getElementById('skipTask2Btn');
   var task2Overlay = document.getElementById('task2Overlay');
   var orderBtn = document.getElementById('orderBtn');
 
@@ -1597,6 +1678,7 @@
   var extraTaskNextBtn = document.getElementById('extraTaskNextBtn');
   var closeExtraTaskBtn = document.getElementById('closeExtraTaskBtn');
   var extraTaskResumeBtn = document.getElementById('extraTaskResumeBtn');
+  var skipExtraTaskBtn = document.getElementById('skipExtraTaskBtn');
 
   function openExtraTask(i){
     currentExtraTaskIndex = i;
@@ -1609,19 +1691,23 @@
     extraTaskNextBtn.hidden = true;
     extraTaskOverlay.hidden = false;
     taskPanelOpen = true;
-    if(document.pointerLockElement === canvas) document.exitPointerLock();
+    exitPointerLockForMenu();
+    updateResumeHint();
   }
+  // closing tries to resume gameplay right away — see attemptRelock() for
+  // why it isn't a plain requestPointerLock() call
   function closeExtraTask(){
     extraTaskOverlay.hidden = true;
     taskPanelOpen = false;
-    if(playing) canvas.requestPointerLock();
+    attemptRelock();
   }
   // brings the current task's overlay back up without resetting the typed
   // answer/result — used when the player walks off and comes back via ESC
   function reopenExtraTask(){
     extraTaskOverlay.hidden = false;
     taskPanelOpen = true;
-    if(document.pointerLockElement === canvas) document.exitPointerLock();
+    exitPointerLockForMenu();
+    updateResumeHint();
   }
   function checkExtraTask(){
     var t = EXTRA_TASKS[currentExtraTaskIndex];
@@ -1651,16 +1737,56 @@
   extraTaskInput.addEventListener('keydown', function(e){ if(e.code === 'Enter'){ checkExtraTask(); } });
   closeExtraTaskBtn.addEventListener('click', closeExtraTask);
   extraTaskResumeBtn.addEventListener('click', closeExtraTask);
+
+  // shared by the natural "Готово!" finish and by skipping straight past task 5
+  function finishAllTasks(){
+    extraTasksDone = true;
+    closeExtraTask();
+    showToast('Поздравляю, вы решили все задачи!', 5000);
+    playNotifySound();
+  }
   extraTaskNextBtn.addEventListener('click', function(){
     if(currentExtraTaskIndex < EXTRA_TASKS.length-1){
       openExtraTask(currentExtraTaskIndex+1);
     } else {
-      extraTasksDone = true;
-      closeExtraTask();
-      showToast('Все задачи решены!');
-      playNotifySound();
+      finishAllTasks();
     }
   });
+
+  // ---------- Skip: lets the player jump past whichever task is currently active,
+  // without solving it, in case they get stuck or just want to move on ----------
+  function skipCurrentTask(){
+    if(extraTasksDone) return;
+    if(!lastAllCorrect){
+      // task 1 is current — jump straight to task 2, same as answering it correctly
+      lastAllCorrect = true;
+      answerInput.classList.remove('correct','incorrect');
+      resultMsg.textContent = '';
+      resultMsg.className = 'result-msg';
+      nextTaskBtn.hidden = true;
+      restartBtn.hidden = true;
+      saveSnapshot();
+      closeTaskPanel();
+      startTask2();
+      return;
+    }
+    if(!task2Solved){
+      // task 2 is current (ordering or laying tiles) — jump straight to task 3
+      if(task2Overlay && !task2Overlay.hidden){ task2Overlay.hidden = true; }
+      task2Solved = true;
+      openExtraTask(0);
+      return;
+    }
+    // one of tasks 3-5 is current
+    if(currentExtraTaskIndex < EXTRA_TASKS.length-1){
+      openExtraTask(currentExtraTaskIndex+1);
+    } else {
+      finishAllTasks();
+    }
+  }
+  if(skipTask1Btn) skipTask1Btn.addEventListener('click', skipCurrentTask);
+  if(skipTask2Btn) skipTask2Btn.addEventListener('click', skipCurrentTask);
+  if(skipExtraTaskBtn) skipExtraTaskBtn.addEventListener('click', skipCurrentTask);
 
   function currentAnswers(){
     return { code: answerInput.value };
@@ -1721,12 +1847,15 @@
   function openTaskPanel(){
     taskPanelOpen = true;
     taskPanel.hidden = false;
-    if(document.pointerLockElement === canvas) document.exitPointerLock();
+    exitPointerLockForMenu();
+    updateResumeHint();
   }
+  // closing tries to resume gameplay right away — see attemptRelock() for
+  // why it isn't a plain requestPointerLock() call
   function closeTaskPanel(){
     taskPanelOpen = false;
     taskPanel.hidden = true;
-    if(playing) canvas.requestPointerLock();
+    attemptRelock();
   }
 
   enterBtn.addEventListener('click', function(){
