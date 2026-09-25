@@ -268,6 +268,10 @@
   .scale-note{
     font-size:13.5px; color:var(--muted); margin:0 0 20px; line-height:1.5;
   }
+  .start-goal{
+    font-size:16px; font-weight:600; line-height:1.5; color:var(--ink);
+    margin:0 0 20px;
+  }
   .no-plock{
     font-size:13.5px; color:var(--bad); background:var(--bad-tint);
     border-radius:10px; padding:10px 12px; margin:0 0 14px; line-height:1.5;
@@ -305,7 +309,6 @@
   }
   .btn--ghost:hover{ color:var(--ink); background:var(--paper-2); }
   .btn:disabled{ opacity:.45; cursor:not-allowed; transform:none; }
-  #restartBtn{ width:100%; margin-top:10px; }
   #skipTask1Btn, #skipTask2Btn, #skipExtraTaskBtn{ width:100%; margin-top:8px; }
   #reorderBtn{ width:100%; margin-top:12px; }
   #nextTaskBtn, #extraTaskNextBtn{ margin-top:14px; }
@@ -422,7 +425,7 @@
   </div>
 
   <div id="hud">
-    <div class="chip"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> идти</span><span>мышь — осмотреться</span><span><kbd>Shift</kbd> бежать</span><span><kbd>Esc</kbd> задание</span></div>
+    <div class="chip"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> идти</span><span>мышь — осмотреться</span><span><kbd>Shift</kbd> бежать</span></div>
     <button id="openTaskBtn" class="chip chip--btn" type="button">Задание</button>
   </div>
 
@@ -432,6 +435,7 @@
       <h1>Прогулка по квартире</h1>
       <img id="startPlanImg" class="task-plan-img" alt="План квартиры">
       <div class="task-text" id="startClue"></div>
+      <p class="start-goal">Найдите номера комнат: кухня, гостиная, кладовая, прихожая, спальня. Всего 5 задач.</p>
       <p class="no-plock" id="noPlockNote" hidden>Похоже, это устройство без мыши и клавиатуры — для полноценной прогулки откройте страницу на компьютере.</p>
       <button id="enterBtn" class="btn btn--primary" type="button">Войти в квартиру</button>
     </div>
@@ -448,13 +452,12 @@
       <div class="task-text" id="panelClue"></div>
       <div class="answer-row">
         <label for="answerInput">Ответ:</label>
-        <input id="answerInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="5" autocomplete="off" placeholder="00000">
+        <input id="answerInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="9" autocomplete="off" placeholder="00000">
       </div>
       <div class="actions">
         <button id="checkBtn" class="btn btn--primary" type="button" style="width:auto;">Проверить</button>
         <span id="resultMsg" class="result-msg" role="status"></span>
       </div>
-      <button id="restartBtn" class="btn btn--ghost" type="button" hidden>Начать заново</button>
       <button id="nextTaskBtn" class="btn btn--primary" type="button" hidden>Далее: задача 2 →</button>
       <button id="skipTask1Btn" class="btn btn--ghost" type="button">Пропустить задачу</button>
       <button id="resumeBtn" class="btn btn--secondary" type="button">Продолжить прогулку</button>
@@ -472,6 +475,7 @@
         <input id="packInput" type="number" min="1" max="40" step="1" />
         <button id="orderBtn" class="btn btn--primary" type="button">Заказать</button>
       </div>
+      <span id="orderMsg" class="task2-msg bad" role="status" hidden></span>
       <button id="reorderBtn" class="btn btn--secondary" type="button" hidden>Пересчитать и заказать заново</button>
       <button id="skipTask2Btn" class="btn btn--ghost" type="button">Пропустить задачу</button>
     </div>
@@ -483,7 +487,7 @@
       <div class="finish-score"><span id="finishSolved">0</span><span class="finish-of">из 5</span></div>
       <h1 id="finishTitle">Поздравляю!</h1>
       <p class="lede" id="finishText"></p>
-      <button id="finishRestartBtn" class="btn btn--primary" type="button">Начать заново</button>
+      <button id="finishRestartBtn" class="btn btn--primary" type="button">Попробовать ещё раз</button>
       <button id="finishStayBtn" class="btn btn--ghost" type="button">Остаться в квартире</button>
     </div>
   </div>
@@ -1640,9 +1644,21 @@
 
   function submitTileOrder(){
     var input = document.getElementById('packInput');
+    var msg = document.getElementById('orderMsg');
     var val = parseInt(input.value, 10);
-    if(!val || val < 1) val = 1;
-    if(val > PACK_MAX) val = PACK_MAX;
+    if(!val || val < 1){
+      msg.textContent = 'Впишите, сколько упаковок заказать.';
+      msg.hidden = false;
+      input.focus();
+      return;
+    }
+    if(val > PACK_MAX){
+      msg.textContent = 'Можно заказать не больше ' + PACK_MAX + ' упаковок.';
+      msg.hidden = false;
+      input.focus();
+      return;
+    }
+    msg.hidden = true;
     orderedPacks = val;
     tileSupplyRemaining = val*10;
     task2Active = true;
@@ -1865,19 +1881,7 @@
     // finished yet. This way ESC never just frees the mouse with nothing to
     // show — it always opens the relevant task menu, right away.
     if(!locked && playing && !taskPanelOpen){
-      if(!lastAllCorrect){
-        openTaskPanel();
-      } else if(!task2Solved){
-        openOrderPanel();
-      } else if(currentExtraTaskIndex >= 0 && !extraTasksDone){
-        reopenExtraTask();
-      } else if(extraTasksDone){
-        openFinish();
-      } else {
-        // nothing left to show (e.g. every task already finished) — still
-        // resume gameplay automatically instead of leaving the hint hanging
-        attemptRelock();
-      }
+      openCurrentTask();
     }
     updateResumeHint();
   });
@@ -1900,7 +1904,6 @@
   var resumeBtn = document.getElementById('resumeBtn');
   var checkBtn = document.getElementById('checkBtn');
   var resultMsg = document.getElementById('resultMsg');
-  var restartBtn = document.getElementById('restartBtn');
   var nextTaskBtn = document.getElementById('nextTaskBtn');
   var skipTask1Btn = document.getElementById('skipTask1Btn');
   var skipTask2Btn = document.getElementById('skipTask2Btn');
@@ -1975,7 +1978,7 @@
   function openExtraTask(i){
     currentExtraTaskIndex = i;
     var t = EXTRA_TASKS[i];
-    extraTaskEyebrow.textContent = t.title + '   #' + t.id;
+    extraTaskEyebrow.textContent = t.title;
     extraTaskBody.innerHTML = t.html;
     extraTaskInput.value = '';
     extraTaskResult.textContent = '';
@@ -2085,7 +2088,6 @@
       resultMsg.textContent = '';
       resultMsg.className = 'result-msg';
       nextTaskBtn.hidden = true;
-      restartBtn.hidden = true;
       saveSnapshot();
       closeTaskPanel();
       startTask2();
@@ -2124,14 +2126,13 @@
   }
 
   function runCheck(){
-    var val = answerInput.value.trim();
+    var val = answerInput.value.replace(/\s+/g, ''); // "7 6 3 2 4" counts, "7,6,3,2,4" doesn't
     answerInput.classList.remove('correct','incorrect');
     if(val === ''){
       lastAllCorrect = false;
       resultMsg.textContent = 'Впишите пятизначный ответ.';
       resultMsg.className = 'result-msg';
       nextTaskBtn.hidden = true;
-      restartBtn.hidden = true;
       saveSnapshot();
       return;
     }
@@ -2147,24 +2148,24 @@
       resultMsg.className = 'result-msg bad';
     }
     nextTaskBtn.hidden = !ok;
-    restartBtn.hidden = ok;
     saveSnapshot();
   }
 
-  // resets task 1 to a clean slate and walks the player back to the front door
-  function restartWalk(){
-    answerInput.value = '';
-    answerInput.classList.remove('correct','incorrect');
-    resultMsg.textContent = '';
-    resultMsg.className = 'result-msg';
-    nextTaskBtn.hidden = true;
-    restartBtn.hidden = true;
-    lastAllCorrect = false;
-    px = spawn.spawnX; pz = spawn.spawnZ;
-    yaw = 0; pitch = 0;
-    applyCamera();
-    saveSnapshot();
-    closeTaskPanel();
+  // task 1 while it's unsolved, task 2's window while ordering/laying tiles,
+  // the current task 3-5 once that chain has started, the results at the end
+  function openCurrentTask(){
+    if(!lastAllCorrect){
+      openTaskPanel();
+    } else if(!task2Solved){
+      openOrderPanel();
+    } else if(currentExtraTaskIndex >= 0 && !extraTasksDone){
+      reopenExtraTask();
+    } else if(extraTasksDone){
+      openFinish();
+    } else {
+      // nothing to show (e.g. between task 2 and 3) — just resume walking
+      attemptRelock();
+    }
   }
 
   function openTaskPanel(){
@@ -2189,19 +2190,20 @@
     canvas.requestPointerLock();
     getAudioCtx(); // unlock audio within this user gesture
   });
-  openTaskBtn.addEventListener('click', openTaskPanel);
+  // the corner button opens whichever task is current, exactly like Esc does
+  openTaskBtn.addEventListener('click', openCurrentTask);
   closeTaskBtn.addEventListener('click', closeTaskPanel);
   resumeBtn.addEventListener('click', closeTaskPanel);
   checkBtn.addEventListener('click', runCheck);
-  restartBtn.addEventListener('click', restartWalk);
   answerInput.addEventListener('input', saveSnapshot);
   answerInput.addEventListener('keydown', function(e){
     if(e.code === 'Enter'){ runCheck(); }
   });
 
   nextTaskBtn.addEventListener('click', function(){
-    closeTaskPanel(); // resumes normal walking — the order form now opens at the wall sign (E)
-    startTask2();
+    taskPanel.hidden = true;
+    startTask2();      // teleport into the bedroom, facing the task-2 sign
+    openOrderPanel();  // and show the task window straight away, like tasks 1, 3-5
   });
   orderBtn.addEventListener('click', submitTileOrder);
 
