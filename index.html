@@ -2224,12 +2224,13 @@
       }
     }
     updateInteractPrompt();
-    // PERF: nothing in the scene animates on its own — a frame only differs from the
-    // previous one when the camera moves, an object is added/removed (tiles, packs,
-    // task-2 props) or the window is resized. Standing still or reading a task
-    // panel used to re-render the whole apartment 60 times a second for nothing.
+    // PERF: while walking, render every frame — skipping idle frames there let the
+    // browser/GPU drop into a low-power state, so the first frames after moving the
+    // mouse arrived unevenly and the camera felt jerky. Only when the game isn't live
+    // (start screen, task panels open) are frames skipped unless something changed.
     var camKey = px + ',' + pz + ',' + yaw + ',' + pitch;
-    if(needsRender || camKey !== lastCamKey || scene.children.length !== lastChildCount){
+    var live = playing && locked && !taskPanelOpen;
+    if(live || needsRender || camKey !== lastCamKey || scene.children.length !== lastChildCount){
       needsRender = false;
       lastCamKey = camKey;
       lastChildCount = scene.children.length;
