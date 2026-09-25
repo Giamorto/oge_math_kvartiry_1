@@ -357,6 +357,15 @@
   .result-msg.ok, .result-msg.bad{ border-radius:10px; padding:7px 12px; }
   .result-msg.ok{ color:var(--ok); background:var(--ok-tint); }
   .result-msg.bad{ color:var(--bad); background:var(--bad-tint); }
+  .finish-card{ width:min(520px, 100%); text-align:center; }
+  .finish-card .eyebrow{ margin-bottom:18px; }
+  .finish-score{
+    display:flex; align-items:baseline; justify-content:center; gap:10px;
+    font-family:var(--font-head); color:var(--pen); margin:0 0 6px;
+  }
+  #finishSolved{ font-size:clamp(64px,14vw,92px); font-weight:700; line-height:1; }
+  .finish-of{ font-size:22px; font-weight:600; color:var(--muted); }
+  #finishStayBtn{ width:100%; margin-top:8px; }
   .hint-small{ font-size:13px; color:var(--muted); margin:16px 0 0; }
 
   @media (prefers-reduced-motion: reduce){
@@ -465,6 +474,17 @@
       </div>
       <button id="reorderBtn" class="btn btn--secondary" type="button" hidden>Пересчитать и заказать заново</button>
       <button id="skipTask2Btn" class="btn btn--ghost" type="button">Пропустить задачу</button>
+    </div>
+  </div>
+
+  <div id="finishOverlay" class="overlay" hidden>
+    <div class="card finish-card">
+      <p class="eyebrow">Итоги</p>
+      <div class="finish-score"><span id="finishSolved">0</span><span class="finish-of">из 5</span></div>
+      <h1 id="finishTitle">Поздравляю!</h1>
+      <p class="lede" id="finishText"></p>
+      <button id="finishRestartBtn" class="btn btn--primary" type="button">Начать заново</button>
+      <button id="finishStayBtn" class="btn btn--ghost" type="button">Остаться в квартире</button>
     </div>
   </div>
 
@@ -1766,6 +1786,7 @@
         setInteractPrompt('Пол выложен! Плитки хватило — заказано впритык, как и нужно.', true);
         if(!task2Solved){
           task2Solved = true;
+          solvedTasks[2] = true;
           setTimeout(function(){ openExtraTask(0); }, 900);
         }
       } else {
@@ -1789,7 +1810,8 @@
   document.addEventListener('keydown', function(e){
     keys[e.code] = true;
     if(e.code === 'Escape'){
-      if(extraTaskOverlay && !extraTaskOverlay.hidden){ closeExtraTask(); }
+      if(finishOverlay && !finishOverlay.hidden){ closeFinish(); }
+      else if(extraTaskOverlay && !extraTaskOverlay.hidden){ closeExtraTask(); }
       else if(task2Overlay && !task2Overlay.hidden){ closeOrderPanel(); }
       else if(taskPanelOpen && taskPanel && !taskPanel.hidden){ closeTaskPanel(); }
       /* otherwise the browser handles pointer unlock automatically, which opens
@@ -1882,6 +1904,8 @@
         openOrderPanel();
       } else if(currentExtraTaskIndex >= 0 && !extraTasksDone){
         reopenExtraTask();
+      } else if(extraTasksDone){
+        openFinish();
       } else {
         // nothing left to show (e.g. every task already finished) — still
         // resume gameplay automatically instead of leaving the hint hanging
@@ -2022,6 +2046,7 @@
     var num = parseFloat(raw.replace(',', '.').replace(/[^0-9.\-]/g, ''));
     var ok = !isNaN(num) && Math.abs(num - t.answer) <= (t.tolerance||0);
     if(ok){
+      solvedTasks[t.num] = true;
       extraTaskResult.textContent = 'Верно!';
       extraTaskResult.className = 'result-msg ok';
       extraTaskNextBtn.hidden = false;
@@ -2039,11 +2064,39 @@
   closeExtraTaskBtn.addEventListener('click', closeExtraTask);
   extraTaskResumeBtn.addEventListener('click', closeExtraTask);
 
+  // tasks answered correctly (skipped ones don't count) — shown in the results window
+  var solvedTasks = {};
+  var finishOverlay = document.getElementById('finishOverlay');
+  function openFinish(){
+    var n = Object.keys(solvedTasks).length;
+    document.getElementById('finishSolved').textContent = n;
+    document.getElementById('finishTitle').textContent = n > 0 ? 'Поздравляю!' : 'Задания пройдены';
+    document.getElementById('finishText').textContent = n > 0
+      ? 'Вы успешно решили ' + n + ' из 5 задач. Начать заново?'
+      : 'Вы не решили ни одной задачи из 5. Начать заново?';
+    finishOverlay.hidden = false;
+    taskPanelOpen = true;
+    exitPointerLockForMenu();
+    updateResumeHint();
+  }
+  function closeFinish(){
+    finishOverlay.hidden = true;
+    taskPanelOpen = false;
+    attemptRelock();
+  }
+  // a full reload is the one restart that's guaranteed clean (scene, packs, tiles, timers)
+  function restartGame(){
+    try{ if(window.claude && window.claude.hot && window.claude.hot.snapshot) window.claude.hot.snapshot({}); }catch(err){}
+    location.reload();
+  }
+  document.getElementById('finishRestartBtn').addEventListener('click', restartGame);
+  document.getElementById('finishStayBtn').addEventListener('click', closeFinish);
+
   // shared by the natural "Готово!" finish and by skipping straight past task 5
   function finishAllTasks(){
     extraTasksDone = true;
-    closeExtraTask();
-    showToast('Поздравляю, вы решили все задачи!', 5000);
+    extraTaskOverlay.hidden = true;
+    openFinish();
     playNotifySound();
   }
   extraTaskNextBtn.addEventListener('click', function(){
@@ -2119,6 +2172,7 @@
     answerInput.classList.add(ok ? 'correct' : 'incorrect');
     lastAllCorrect = ok;
     if(ok){
+      solvedTasks[1] = true;
       resultMsg.textContent = 'Верно! Ответ: ' + CORRECT_CODE;
       resultMsg.className = 'result-msg ok';
     } else {
