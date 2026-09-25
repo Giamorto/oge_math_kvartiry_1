@@ -119,6 +119,18 @@
     pointer-events:none; opacity:0; transition:opacity .15s;
   }
   #interactPrompt.on, #resumeHint.on{ opacity:1; }
+  /* permanent "how to open the task" hint, a bit lower than the E-prompt */
+  #escHint{
+    position:absolute; top:calc(50% + 84px); left:50%; transform:translateX(-50%);
+    font-family:var(--font-ui); font-size:13px; font-weight:500;
+    background:var(--hud); color:var(--hud-ink);
+    border:1px solid rgba(255,255,255,.1);
+    border-radius:12px; padding:7px 13px; white-space:nowrap;
+    backdrop-filter:blur(8px);
+    pointer-events:none; opacity:0; transition:opacity .2s;
+  }
+  #escHint.on{ opacity:.85; }
+  #escHint kbd{ margin-left:4px; }
   #interactPrompt kbd{ margin:0 6px; }
 
   #toast{
@@ -386,6 +398,7 @@
 <div id="app">
   <canvas id="scene"></canvas>
   <div id="interactPrompt"></div>
+  <div id="escHint">Чтобы открыть задание, нажмите <kbd>Esc</kbd></div>
   <div id="resumeHint">Возвращаемся в игру…</div>
   <div id="toast" aria-live="polite"></div>
 
@@ -2195,6 +2208,14 @@
     mmDot.style.transform = 'rotate(' + deg + 'deg)';
   }
 
+  // shown while walking, as long as there is still a task left to open with Esc
+  var escHintEl = document.getElementById('escHint');
+  var escHintOn = null;
+  function updateEscHint(){
+    var on = playing && locked && !taskPanelOpen && !extraTasksDone;
+    if(on !== escHintOn){ escHintEl.classList.toggle('on', on); escHintOn = on; }
+  }
+
   // ---------- Main loop ----------
   var clock = new THREE.Clock();
   function tick(){
@@ -2223,6 +2244,7 @@
       }
     }
     updateInteractPrompt();
+    updateEscHint();
     // PERF: while walking, render every frame — skipping idle frames there let the
     // browser/GPU drop into a low-power state, so the first frames after moving the
     // mouse arrived unevenly and the camera felt jerky. Only when the game isn't live
