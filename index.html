@@ -292,6 +292,7 @@
     font-weight:600; font-size:14.5px;
   }
   .btn--ghost:hover{ color:var(--ink); background:var(--paper-2); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; transform:none; }
   #restartBtn{ width:100%; margin-top:10px; }
   #skipTask1Btn, #skipTask2Btn, #skipExtraTaskBtn{ width:100%; margin-top:8px; }
   #reorderBtn{ width:100%; margin-top:12px; }
@@ -1562,6 +1563,7 @@
     orderedPacks = 0;
     tileSupplyRemaining = 0;
     task2Active = false;
+    task2FailAt = 0;
     interactPromptHTML = null; // force the prompt to refresh
   }
 
@@ -1571,8 +1573,20 @@
     return (full && tileSupplyRemaining >= 10) || (!full && tileSupplyRemaining <= 0);
   }
 
+  // after a wrong order the result stays on screen for a few seconds before
+  // re-ordering is allowed — so the student actually sees the gap in the floor
+  // (or the leftover packs) instead of instantly wiping it with E
+  var TASK2_FAIL_PAUSE = 5000;
+  var task2FailAt = 0;
+  function failPauseLeft(){
+    if(!task2Failed()){ task2FailAt = 0; return 0; }
+    if(!task2FailAt) task2FailAt = performance.now();
+    return Math.max(0, TASK2_FAIL_PAUSE - (performance.now() - task2FailAt));
+  }
+
   // clears the old order and reopens the order form with an empty field
   function reorderTiles(){
+    if(failPauseLeft() > 0) return;
     resetTileOrder();
     document.getElementById('packInput').value = '';
     openOrderPanel();
@@ -1605,7 +1619,12 @@
     // order field — ordering on top would duplicate the packs already placed
     var orderRow = document.querySelector('#task2Overlay .order-row');
     if(orderRow) orderRow.style.display = orderedPacks > 0 ? 'none' : '';
-    document.getElementById('reorderBtn').hidden = !(orderedPacks > 0);
+    var reorderBtn = document.getElementById('reorderBtn');
+    reorderBtn.hidden = !(orderedPacks > 0);
+    // same pause as the E shortcut — Esc isn't a way around it
+    var pause = failPauseLeft();
+    reorderBtn.disabled = pause > 0;
+    if(pause > 0) setTimeout(function(){ reorderBtn.disabled = false; }, pause);
     taskPanelOpen = true;
     exitPointerLockForMenu();
     updateResumeHint();
@@ -1738,13 +1757,20 @@
           setTimeout(function(){ openExtraTask(0); }, 900);
         }
       } else {
-        setInteractPrompt('Пол выложен, но плитки осталось слишком много. <kbd>E</kbd>пересчитать и заказать заново', true);
+        setInteractPrompt('Пол выложен, но плитки осталось слишком много. ' + reorderHint(), true);
       }
     } else if(tileSupplyRemaining <= 0){
-      setInteractPrompt('Плитки не хватило! <kbd>E</kbd>пересчитать и заказать заново', true);
+      setInteractPrompt('Плитки не хватило! ' + reorderHint(), true);
     } else {
       setInteractPrompt('<kbd>E</kbd>положить плитку', true);
     }
+  }
+
+  function reorderHint(){
+    var left = failPauseLeft();
+    return left > 0
+      ? 'Пересчитать можно через ' + Math.ceil(left/1000) + ' с'
+      : '<kbd>E</kbd>пересчитать и заказать заново';
   }
 
   // ---------- Input ----------
