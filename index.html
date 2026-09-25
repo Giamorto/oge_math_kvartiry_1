@@ -751,165 +751,186 @@
     return tex;
   }
 
-  // Wall plaque for the follow-up tiling problem: a brown, black-bordered tile sample
-  // (20 cm x 10 cm ratio) with a blocky pixel-art texture and dimension callouts.
+  // ---------- Canvas textures for tiles, packs and wall signs ----------
+  // Shared look with the UI: paper white, school-pen blue, ink text, Onest font.
+  // Every texture here is sRGB (the renderer outputs sRGB — without this dark text
+  // came out washed-out grey), mipmapped with max anisotropy so text stays crisp
+  // at a distance and at grazing angles, and redrawn once the webfont is ready.
+  var TEX_FONT = "Onest, 'Segoe UI', Arial, sans-serif";
+  var TEX_INK = '#111318', TEX_PEN = '#2b59e0', TEX_PAPER = '#fbfaf6';
+
+  function makeCanvasTexture(W, H, draw){
+    var c = document.createElement('canvas'); c.width = W; c.height = H;
+    var ctx = c.getContext('2d');
+    draw(ctx, W, H);
+    var tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    if(document.fonts && document.fonts.load){
+      Promise.all([document.fonts.load('700 40px Onest'), document.fonts.load('600 40px Onest')])
+        .then(function(){
+          ctx.clearRect(0, 0, W, H);
+          draw(ctx, W, H);
+          tex.needsUpdate = true;
+          needsRender = true;
+        })
+        .catch(function(){});
+    }
+    return tex;
+  }
+
+  function roundRect(ctx, x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+  }
+
+  // one glazed terracotta tile: warm gradient, faint speckle, bevelled edge
+  function drawTile(ctx, x, y, w, h){
+    var r = Math.max(2, Math.min(w, h) * 0.06);
+    var g = ctx.createLinearGradient(x, y, x+w, y+h);
+    g.addColorStop(0, '#dc8660');
+    g.addColorStop(1, '#b85836');
+    roundRect(ctx, x, y, w, h, r);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.save();
+    roundRect(ctx, x, y, w, h, r); ctx.clip();
+    for(var i = 0; i < w*h/180; i++){
+      var n = Math.abs(Math.sin(i*12.9898 + x*0.37 + y*78.233) * 43758.5453) % 1;
+      var m = Math.abs(Math.sin(i*39.3468 + y*0.11) * 12543.123) % 1;
+      ctx.fillStyle = n > 0.5 ? 'rgba(255,235,215,.10)' : 'rgba(90,30,10,.10)';
+      ctx.fillRect(x + n*w, y + m*h, 2, 2);
+    }
+    var lw = Math.max(2, Math.min(w, h) * 0.05);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = 'rgba(255,238,220,.45)'; // light top/left bevel
+    ctx.beginPath(); ctx.moveTo(x, y+h); ctx.lineTo(x, y); ctx.lineTo(x+w, y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(70,20,5,.35)';     // dark bottom/right bevel
+    ctx.beginPath(); ctx.moveTo(x+w, y); ctx.lineTo(x+w, y+h); ctx.lineTo(x, y+h); ctx.stroke();
+    ctx.restore();
+  }
+
+  // dimension line with end ticks and a centred label (horizontal or vertical)
+  function drawDim(ctx, x0, y0, x1, y1, label, fontPx){
+    var vertical = x0 === x1;
+    ctx.strokeStyle = TEX_PEN; ctx.fillStyle = TEX_PEN;
+    ctx.lineWidth = Math.max(3, fontPx*0.07); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    var t = fontPx*0.28;
+    ctx.beginPath();
+    if(vertical){ ctx.moveTo(x0-t, y0); ctx.lineTo(x0+t, y0); ctx.moveTo(x1-t, y1); ctx.lineTo(x1+t, y1); }
+    else { ctx.moveTo(x0, y0-t); ctx.lineTo(x0, y0+t); ctx.moveTo(x1, y1-t); ctx.lineTo(x1, y1+t); }
+    ctx.stroke();
+    ctx.font = '700 ' + fontPx + 'px ' + TEX_FONT;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    if(vertical){
+      ctx.save();
+      ctx.translate(x0 - fontPx*0.45, (y0+y1)/2);
+      ctx.rotate(-Math.PI/2);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.fillText(label, (x0+x1)/2, y0 - fontPx*0.35);
+    }
+  }
+
+  // Wall plaque for the tiling problem: a real-looking tile sample with its size
   function makeTilePlaqueTexture(){
-    var W = 512, H = 256;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-
-    ctx.fillStyle = '#efe9db';
-    ctx.fillRect(0, 0, W, H);
-
-    var tx0 = 110, ty0 = 70, tx1 = 430, ty1 = 210;
-    var tw = tx1 - tx0, th = ty1 - ty0;
-
-    // blocky pixelated ceramic-brown mosaic
-    var block = 16;
-    for (var y = ty0; y < ty1; y += block) {
-      for (var x = tx0; x < tx1; x += block) {
-        var n = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453);
-        n = n - Math.floor(n);
-        var shade = 0.82 + n * 0.34;
-        var r = Math.min(255, Math.round(139 * shade));
-        var g = Math.min(255, Math.round(90 * shade));
-        var b = Math.min(255, Math.round(43 * shade));
-        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
-        ctx.fillRect(x, y, Math.min(block, tx1 - x), Math.min(block, ty1 - y));
-      }
-    }
-
-    // black border around the tile
-    ctx.strokeStyle = '#141110';
-    ctx.lineWidth = 8;
-    ctx.strokeRect(tx0, ty0, tw, th);
-
-    ctx.strokeStyle = '#241d10';
-    ctx.fillStyle = '#241d10';
-    ctx.lineWidth = 2;
-    ctx.font = '700 26px Arial, Helvetica, sans-serif';
-
-    // width dimension (top, 20 см)
-    var dimY = ty0 - 22;
-    ctx.beginPath(); ctx.moveTo(tx0, dimY); ctx.lineTo(tx1, dimY); ctx.stroke();
-    [tx0, tx1].forEach(function (x) {
-      ctx.beginPath(); ctx.moveTo(x, dimY - 6); ctx.lineTo(x, dimY + 6); ctx.stroke();
+    return makeCanvasTexture(1024, 512, function(ctx, W, H){
+      ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 16);
+      // plaque is squeezed between the loggia door and the corner, so the size
+      // labels get the space and the tile sample is drawn smaller
+      var tx0 = 380, ty0 = 210, tw = 520, th = 260;
+      drawTile(ctx, tx0, ty0, tw, th);
+      drawDim(ctx, tx0, ty0-44, tx0+tw, ty0-44, '20 см', 116);
+      drawDim(ctx, tx0-44, ty0, tx0-44, ty0+th, '10 см', 116);
     });
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('20 см', (tx0 + tx1) / 2, dimY - 8);
-
-    // height dimension (left, 10 см)
-    var dimX = tx0 - 22;
-    ctx.beginPath(); ctx.moveTo(dimX, ty0); ctx.lineTo(dimX, ty1); ctx.stroke();
-    [ty0, ty1].forEach(function (y) {
-      ctx.beginPath(); ctx.moveTo(dimX - 6, y); ctx.lineTo(dimX + 6, y); ctx.stroke();
-    });
-    ctx.save();
-    ctx.translate(dimX - 14, (ty0 + ty1) / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('10 см', 0, 0);
-    ctx.restore();
-
-    var tex = new THREE.CanvasTexture(c);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-    return tex;
   }
 
-  // A wall plaque showing one floor cell (same look as the actual floor grid squares)
-  // with its dimensions labelled, mounted right by the entrance so the scale is clear
-  // from the very first step.
+  // A wall plaque showing one floor cell with its size, by the entrance,
+  // so the scale is clear from the very first step
   function makeCellPlaqueTexture(){
-    var W = 420, H = 420;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-
-    ctx.fillStyle = '#efe9db';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.fillStyle = '#241d10';
-    ctx.textAlign = 'center';
-    ctx.font = '700 28px Arial, Helvetica, sans-serif';
-    ctx.fillText('1 клетка пола', W/2, 44);
-
-    var tx0 = 110, ty0 = 92, tx1 = 310, ty1 = 292; // square swatch, same colours as the floor
-    var tw = tx1-tx0, th = ty1-ty0;
-
-    ctx.fillStyle = '#f4f0e6';
-    ctx.fillRect(tx0, ty0, tw, th);
-    ctx.strokeStyle = '#63594a';
-    ctx.lineWidth = 8;
-    ctx.strokeRect(tx0, ty0, tw, th);
-
-    ctx.strokeStyle = '#241d10';
-    ctx.fillStyle = '#241d10';
-    ctx.lineWidth = 2;
-    ctx.font = '700 22px Arial, Helvetica, sans-serif';
-
-    // width dimension (top)
-    var dimY = ty0 - 20;
-    ctx.beginPath(); ctx.moveTo(tx0, dimY); ctx.lineTo(tx1, dimY); ctx.stroke();
-    [tx0, tx1].forEach(function (x) {
-      ctx.beginPath(); ctx.moveTo(x, dimY - 6); ctx.lineTo(x, dimY + 6); ctx.stroke();
+    return makeCanvasTexture(1024, 1024, function(ctx, W, H){
+      ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 200);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 124px ' + TEX_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('1 клетка', W/2, 104);
+      // the plaque is only ~34 cm wide (door on one side, corner on the other),
+      // so the labels get most of the space and the cell swatch stays modest
+      var s = 440, tx0 = 470, ty0 = 470;
+      ctx.fillStyle = '#f4f1ea'; ctx.fillRect(tx0, ty0, s, s);  // same light floor cell
+      ctx.strokeStyle = '#7d8290'; ctx.lineWidth = 12;
+      ctx.strokeRect(tx0, ty0, s, s);
+      drawDim(ctx, tx0, ty0-60, tx0+s, ty0-60, '0,4 м', 150);
+      drawDim(ctx, tx0-60, ty0, tx0-60, ty0+s, '0,4 м', 150);
     });
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('0,4 м', (tx0 + tx1) / 2, dimY - 8);
-
-    // height dimension (left)
-    var dimX = tx0 - 20;
-    ctx.beginPath(); ctx.moveTo(dimX, ty0); ctx.lineTo(dimX, ty1); ctx.stroke();
-    [ty0, ty1].forEach(function (y) {
-      ctx.beginPath(); ctx.moveTo(dimX - 6, y); ctx.lineTo(dimX + 6, y); ctx.stroke();
-    });
-    ctx.save();
-    ctx.translate(dimX - 14, (ty0 + ty1) / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('0,4 м', 0, 0);
-    ctx.restore();
-
-    ctx.font = '500 19px Arial, Helvetica, sans-serif';
-    ctx.fillStyle = '#4a4030';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText('40 см × 40 см', W/2, ty1 + 24);
-
-    var tex = new THREE.CanvasTexture(c);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-    return tex;
   }
 
-  // Floor version of the same brown/black-bordered pixel tile, sized to true scale
-  // (20cm x 10cm) so it can be compared directly against a 0.4m grid cell.
+  // Floor version of the same tile, true scale (20 cm × 10 cm) with a light grout edge
   function makeFloorTileTexture(){
-    var W = 200, H = 100;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-    var block = 10;
-    for (var y = 0; y < H; y += block) {
-      for (var x = 0; x < W; x += block) {
-        var n = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453);
-        n = n - Math.floor(n);
-        var shade = 0.82 + n * 0.34;
-        var r = Math.min(255, Math.round(139 * shade));
-        var g = Math.min(255, Math.round(90 * shade));
-        var b = Math.min(255, Math.round(43 * shade));
-        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
-        ctx.fillRect(x, y, block, block);
-      }
-    }
-    ctx.strokeStyle = '#141110';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(0, 0, W, H);
-    var tex = new THREE.CanvasTexture(c);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-    return tex;
+    return makeCanvasTexture(256, 128, function(ctx, W, H){
+      ctx.fillStyle = '#efe7da'; ctx.fillRect(0, 0, W, H);
+      drawTile(ctx, 4, 4, W-8, H-8);
+    });
   }
+
+  // Wall sign for task 2: pen-blue header band, big ink text
+  function makeSignTexture(title, lines){
+    return makeCanvasTexture(1600, 1100, function(ctx, W, H){
+      ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 210);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 104px ' + TEX_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(title.toUpperCase(), W/2, 110);
+      ctx.fillStyle = TEX_INK;
+      ctx.font = '600 74px ' + TEX_FONT; // longest line must fit the 1600px board
+      var y = 390;
+      lines.forEach(function(line){ ctx.fillText(line, W/2, y); y += 140; });
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, H-14, W, 14);
+    });
+  }
+
+  // Pack of 10 tiles: kraft cardboard box, blue band, white label with a tile and "10 шт"
+  function makePackSideTexture(){
+    return makeCanvasTexture(256, 512, function(ctx, W, H){
+      ctx.fillStyle = '#c9a26b'; ctx.fillRect(0, 0, W, H);
+      for(var i = 0; i < 260; i++){ // cardboard fibres
+        var n = Math.abs(Math.sin(i*12.9898) * 43758.5453) % 1;
+        var m = Math.abs(Math.sin(i*78.233) * 12543.123) % 1;
+        ctx.fillStyle = n > 0.5 ? 'rgba(255,240,210,.12)' : 'rgba(90,60,20,.12)';
+        ctx.fillRect(n*W, m*H, 10 + m*18, 2);
+      }
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 36, W, 44);
+      roundRect(ctx, 26, 170, W-52, 230, 14);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      drawTile(ctx, 58, 196, W-116, (W-116)/2);
+      ctx.fillStyle = TEX_INK;
+      ctx.font = '700 58px ' + TEX_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('10 шт', W/2, 348);
+    });
+  }
+  function makePackTopTexture(){
+    return makeCanvasTexture(256, 128, function(ctx, W, H){
+      ctx.fillStyle = '#c29a62'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(255,245,225,.55)'; ctx.fillRect(0, H/2-16, W, 32); // packing tape
+      ctx.fillStyle = TEX_INK;
+      ctx.font = '700 44px ' + TEX_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('×10', W/2, H/2+2);
+    });
+  }
+
+
+
 
   function makeNumberDecal(n, size){
     var s = 256;
@@ -1261,7 +1282,7 @@
       // scale reference: a sample floor cell with its dimensions, mounted at eye level
       // right beside the door so it's the first thing read while approaching the entrance
       var cellPlaqueTex = makeCellPlaqueTexture();
-      var cellPlaqueMat = new THREE.MeshBasicMaterial({ map:cellPlaqueTex, side:THREE.DoubleSide });
+      var cellPlaqueMat = new THREE.MeshBasicMaterial({ map:cellPlaqueTex, side:THREE.DoubleSide, fog:false, toneMapped:false });
       var cellPlaque = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), cellPlaqueMat);
       var cellPlaqueX = (dx1 + sR)/2; // centred in the wall nook between the door and the corner
       cellPlaque.position.set(cellPlaqueX, EYE_H, nearZ + WALL_T/2 + 0.02);
@@ -1436,73 +1457,19 @@
     toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, duration || 2600);
   }
 
+
+
   // ---------- Task 2 scene: sign, tile-sample plaque, demo tile, tile packs ----------
-  function makeSignTexture(title, lines){
-    var W = 900, H = 620;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
-    ctx.fillStyle = '#f3ead9';
-    ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = '#241d10';
-    ctx.lineWidth = 10;
-    ctx.strokeRect(14, 14, W-28, H-28);
-    ctx.fillStyle = '#241d10';
-    ctx.textAlign = 'center';
-    ctx.font = '700 54px Arial, Helvetica, sans-serif';
-    ctx.fillText(title, W/2, 100);
-    ctx.font = '500 40px Arial, Helvetica, sans-serif';
-    var y = 210;
-    lines.forEach(function(line){ ctx.fillText(line, W/2, y); y += 62; });
-    var tex = new THREE.CanvasTexture(c);
-    tex.anisotropy = 4;
-    return tex;
-  }
-
-  function makePackTopTexture(){
-    var W = 200, H = 100;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-    var block = 10;
-    for (var y = 0; y < H; y += block) {
-      for (var x = 0; x < W; x += block) {
-        var n = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453);
-        n = n - Math.floor(n);
-        var shade = 0.82 + n * 0.34;
-        var r = Math.min(255, Math.round(139 * shade));
-        var g = Math.min(255, Math.round(90 * shade));
-        var b = Math.min(255, Math.round(43 * shade));
-        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
-        ctx.fillRect(x, y, block, block);
-      }
-    }
-    ctx.strokeStyle = '#141110';
-    ctx.lineWidth = 8;
-    ctx.strokeRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(243,234,217,0.92)';
-    ctx.fillRect(W/2-34, H/2-16, 68, 32);
-    ctx.strokeStyle = '#141110'; ctx.lineWidth = 2;
-    ctx.strokeRect(W/2-34, H/2-16, 68, 32);
-    ctx.fillStyle = '#241d10';
-    ctx.font = '700 22px Arial, Helvetica, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('×10', W/2, H/2+1);
-    var tex = new THREE.CanvasTexture(c);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-    return tex;
-  }
-
   var PACK_H = 0.4; // stacked pack height
   // a pack of 10 tiles, built as a single mesh (box with a labelled top face and
-  // tile-coloured sides — the same mosaic texture as the floor tile itself).
+  // printed kraft-cardboard sides).
   // Geometry/materials are created once and shared by every pack: 40 packs used
   // to mean 80 canvas textures, and a re-order would leak all of them.
   var packGeo = null, packMats = null;
   function makePackMesh(){
     if(!packGeo){
       var topMat = new THREE.MeshLambertMaterial({ map:makePackTopTexture() });
-      var sideMat = new THREE.MeshLambertMaterial({ map:makeFloorTileTexture() });
+      var sideMat = new THREE.MeshLambertMaterial({ map:makePackSideTexture() });
       packMats = [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]; // +x,-x,+y,-y,+z,-z
       packGeo = new THREE.BoxGeometry(0.2, PACK_H, 0.1);
     }
@@ -1537,8 +1504,8 @@
     if(!loggiaRoom || !bedroomRoom) return;
 
     var plaqueTex = makeTilePlaqueTexture();
-    var plaqueMat = new THREE.MeshBasicMaterial({ map:plaqueTex, side:THREE.DoubleSide });
-    var plaque = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.15), plaqueMat);
+    var plaqueMat = new THREE.MeshBasicMaterial({ map:plaqueTex, side:THREE.DoubleSide, fog:false, toneMapped:false });
+    var plaque = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.16), plaqueMat);
     var plaqueWallZ = loggiaRoom.y1*CELL;
     var plaqueX = (loggiaRoom.x1 - 0.5)*CELL;
     plaque.position.set(plaqueX, 1.5, plaqueWallZ + WALL_T/2 + 0.02);
@@ -1560,8 +1527,8 @@
     placedTileCount = 0; // loggia starts bare — every tile comes from the ordered packs
 
     var signTex = makeSignTexture('Задача 2', TILE_TASK2_LINES);
-    var signMat = new THREE.MeshBasicMaterial({ map:signTex, side:THREE.DoubleSide });
-    var sign = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.9), signMat);
+    var signMat = new THREE.MeshBasicMaterial({ map:signTex, side:THREE.DoubleSide, fog:false, toneMapped:false }); // no ACES/fog: white paper stays white, ink stays black
+    var sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.1), signMat);
     var signX = bedroomRoom.x1*CELL - (WALL_T/2+0.02);
     var signZ = (bedroomRoom.y0+bedroomRoom.y1)/2*CELL;
     sign.position.set(signX, 1.55, signZ);
