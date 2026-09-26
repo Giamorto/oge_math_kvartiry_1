@@ -430,7 +430,6 @@
 
   <div id="hud">
     <div class="chip"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> идти</span><span>мышь — осмотреться</span><span><kbd>Shift</kbd> бежать</span></div>
-    <button id="openTaskBtn" class="chip chip--btn" type="button">Задание</button>
   </div>
 
   <div id="startOverlay" class="overlay">
@@ -2068,7 +2067,6 @@
   var startOverlay = document.getElementById('startOverlay');
   var taskPanel = document.getElementById('taskPanel');
   var enterBtn = document.getElementById('enterBtn');
-  var openTaskBtn = document.getElementById('openTaskBtn');
   var closeTaskBtn = document.getElementById('closeTaskBtn');
   var resumeBtn = document.getElementById('resumeBtn');
   var checkBtn = document.getElementById('checkBtn');
@@ -2360,8 +2358,6 @@
     canvas.requestPointerLock();
     getAudioCtx(); // unlock audio within this user gesture
   });
-  // the corner button opens whichever task is current, exactly like Esc does
-  openTaskBtn.addEventListener('click', openCurrentTask);
   closeTaskBtn.addEventListener('click', closeTaskPanel);
   resumeBtn.addEventListener('click', closeTaskPanel);
   checkBtn.addEventListener('click', runCheck);
