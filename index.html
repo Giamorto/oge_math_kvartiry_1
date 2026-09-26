@@ -2791,8 +2791,18 @@
 
   // ---------- Main loop ----------
   var clock = new THREE.Clock();
-  function tick(){
+  // cap at 60 fps: on 120/144 Hz monitors rAF fires 2-2.4x as often, which only burns
+  // GPU/battery. Frames are drawn on a fixed 60 Hz schedule (nextFrameT advances by
+  // exactly 1/60 s), with 2 ms of slack so a 60 Hz display, whose rAF intervals jitter
+  // around 16.7 ms, never loses a frame. The clock isn't read on skipped frames, so
+  // movement still uses the real elapsed time.
+  var FRAME_MS = 1000/60, nextFrameT = 0;
+  function tick(now){
     requestAnimationFrame(tick);
+    if(now === undefined) now = performance.now();
+    if(now < nextFrameT - 2) return;
+    nextFrameT += FRAME_MS;
+    if(nextFrameT < now) nextFrameT = now + FRAME_MS; // fell behind (tab was hidden, slow frame)
     var dt = Math.min(clock.getDelta(), 0.05);
 
     if(locked && playing && !taskPanelOpen){
