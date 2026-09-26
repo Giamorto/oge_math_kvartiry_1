@@ -405,6 +405,49 @@
     .order-row{ flex-wrap:wrap; }
   }
 
+  /* ---------- touch controls (phones/tablets) ---------- */
+  #touchUI{ position:absolute; inset:0; pointer-events:none; z-index:5; }
+  #touchUI[hidden]{ display:none; }
+  #joyBase{
+    position:absolute; left:24px; bottom:calc(28px + env(safe-area-inset-bottom,0px));
+    width:136px; height:136px; border-radius:50%;
+    background:rgba(17,19,24,.32); border:2px solid rgba(255,255,255,.4);
+    pointer-events:auto; touch-action:none;
+  }
+  #joyKnob{
+    position:absolute; left:50%; top:50%; width:62px; height:62px; margin:-31px;
+    border-radius:50%; background:rgba(255,255,255,.9); box-shadow:0 4px 14px rgba(0,0,0,.35);
+  }
+  #touchActBtn{
+    position:absolute; right:24px; bottom:calc(44px + env(safe-area-inset-bottom,0px));
+    width:88px; height:88px; border-radius:50%; border:none;
+    background:var(--marker); color:#1b1600; font:700 34px var(--font-mono);
+    box-shadow:inset 0 -5px 0 var(--marker-deep), 0 8px 22px -8px rgba(0,0,0,.5);
+    pointer-events:auto; touch-action:none; opacity:.4; transition:opacity .15s;
+  }
+  #touchActBtn.ready{ opacity:1; }
+  #touchTaskBtn{
+    position:absolute; left:16px; top:calc(16px + env(safe-area-inset-top,0px));
+    font:600 16px var(--font-head); border:none; border-radius:14px; padding:12px 18px;
+    background:var(--marker); color:#1b1600; box-shadow:inset 0 -4px 0 var(--marker-deep);
+    pointer-events:auto;
+  }
+  body.touch #scene{ touch-action:none; }
+  body.touch #hud .chip, body.touch #escHint{ display:none !important; }
+  .touch-note{
+    font-size:14.5px; line-height:1.5; color:var(--ink-soft);
+    background:var(--paper-2); border-radius:12px; padding:10px 12px; margin:0 0 16px;
+  }
+  /* on small screens the 2x in-game hints would run off the edges */
+  @media (max-width:700px){
+    #interactPrompt, #resumeHint{
+      font-size:15px; padding:9px 14px; border-radius:14px;
+      white-space:normal; max-width:88vw; text-align:center;
+    }
+    #interactPrompt kbd{ border-radius:6px; padding:0 6px; margin:0 6px; box-shadow:inset 0 -2px 0 var(--marker-deep); }
+    #toast{ font-size:16px; padding:12px 18px; border-radius:16px; white-space:normal; }
+  }
+
   /* ---------- minimap ---------- */
   #minimap{
     position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); right:16px;
@@ -450,6 +493,13 @@
 
   <div id="hud">
     <div class="chip"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> идти</span><span>мышь — осмотреться</span><span><kbd>Shift</kbd> бежать</span></div>
+  </div>
+
+  <!-- phone/tablet controls (shown only on touch screens) -->
+  <div id="touchUI" hidden>
+    <div id="joyBase"><div id="joyKnob"></div></div>
+    <button id="touchActBtn" type="button" aria-label="Действие">E</button>
+    <button id="touchTaskBtn" type="button">Задание</button>
   </div>
 
   <div id="startOverlay" class="overlay">
@@ -1687,6 +1737,8 @@
   var px = spawn.spawnX, pz = spawn.spawnZ;
   var yaw = 0, pitch = 0;
   var keys = {};
+  // phones/tablets: no pointer lock — 'locked' then just means "walking, no menu open"
+  var touchMode = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   var locked = false;
   var playing = false;
   var taskPanelOpen = false;
@@ -2047,6 +2099,7 @@
       interactPromptEl.innerHTML = html;
       interactPromptHTML = html;
     }
+    if(touchMode) touchActBtn.classList.toggle('ready', !!interactPromptOn && /<kbd>E/.test(interactPromptHTML || ''));
   }
   function updateInteractPrompt(){
     if(!interactPromptEl) return;
@@ -2090,6 +2143,13 @@
       : '<kbd>E</kbd>пересчитать и заказать заново';
   }
 
+  // what E (or the touch E button) does where the player stands
+  function doInteract(){
+    if(task2Ready && !orderedPacks && nearSign()){ openOrderPanel(); }
+    else if(task2Failed() && nearTileDemo()){ reorderTiles(); }
+    else { placeNextTile(); }
+  }
+
   // ---------- Input ----------
   document.addEventListener('keydown', function(e){
     keys[e.code] = true;
@@ -2101,11 +2161,7 @@
       /* otherwise the browser handles pointer unlock automatically, which opens
          the task panel via the pointerlockchange listener below */
     }
-    if(e.code === 'KeyE' && !e.repeat && locked){
-      if(task2Ready && !orderedPacks && nearSign()){ openOrderPanel(); }
-      else if(task2Failed() && nearTileDemo()){ reorderTiles(); }
-      else { placeNextTile(); }
-    }
+    if(e.code === 'KeyE' && !e.repeat && locked){ doInteract(); }
   });
   document.addEventListener('keyup', function(e){ keys[e.code] = false; });
 
@@ -2127,6 +2183,7 @@
   // this instead of calling document.exitPointerLock() directly, so any
   // relock attempt still pending from a previous close gets cancelled
   function exitPointerLockForMenu(){
+    if(touchMode){ locked = false; return; }
     if(relockTimer){ clearTimeout(relockTimer); relockTimer = null; }
     if(document.pointerLockElement === canvas){
       document.exitPointerLock();
@@ -2146,6 +2203,7 @@
   // pointerlockerror handler below keeps retrying quietly every ~200ms
   // until it succeeds — no click required either way.
   function attemptRelock(){
+    if(touchMode){ locked = playing && !taskPanelOpen; updateResumeHint(); return; }
     if(!playing || taskPanelOpen || document.pointerLockElement === canvas) { updateResumeHint(); return; }
     if(relockTimer) return;
     relockAttempts = 0;
@@ -2213,8 +2271,77 @@
   if(!('requestPointerLock' in document.documentElement) || !('onmousemove' in window)){
     // heuristic only; do not hide controls on the assumption of touch
   }
-  if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches){
-    document.getElementById('noPlockNote').hidden = false;
+  // ---------- Touch controls: joystick to walk, drag to look, E and "Задание" buttons ----------
+  var touchUI = document.getElementById('touchUI');
+  var joyBase = document.getElementById('joyBase'), joyKnob = document.getElementById('joyKnob');
+  var touchActBtn = document.getElementById('touchActBtn');
+  var joyX = 0, joyY = 0, joyId = null, lookId = null, lookLastX = 0, lookLastY = 0;
+  var JOY_R = 52, TOUCH_SENS = 0.006;
+  if(touchMode){
+    document.body.classList.add('touch');
+    var note = document.getElementById('noPlockNote');
+    note.className = 'touch-note';
+    note.textContent = 'На телефоне: джойстик слева — идти, проведите пальцем по экрану — осмотреться, ' +
+                       'жёлтая кнопка E — действие, «Задание» — открыть задачу.';
+    note.hidden = false;
+  }
+  function setJoy(t){
+    var r = joyBase.getBoundingClientRect();
+    var dx = t.clientX - (r.left + r.width/2), dy = t.clientY - (r.top + r.height/2);
+    var len = Math.sqrt(dx*dx + dy*dy);
+    if(len > JOY_R){ dx *= JOY_R/len; dy *= JOY_R/len; }
+    joyKnob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    joyX = dx/JOY_R; joyY = dy/JOY_R;
+  }
+  function resetJoy(){ joyId = null; joyX = joyY = 0; joyKnob.style.transform = ''; }
+  joyBase.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    var t = e.changedTouches[0];
+    joyId = t.identifier; setJoy(t);
+  }, { passive:false });
+  canvas.addEventListener('touchstart', function(e){
+    if(lookId !== null) return;
+    var t = e.changedTouches[0];
+    lookId = t.identifier; lookLastX = t.clientX; lookLastY = t.clientY;
+  }, { passive:true });
+  document.addEventListener('touchmove', function(e){
+    var used = false;
+    for(var i = 0; i < e.changedTouches.length; i++){
+      var t = e.changedTouches[i];
+      if(t.identifier === joyId){ setJoy(t); used = true; }
+      else if(t.identifier === lookId){
+        if(locked && playing && !taskPanelOpen){
+          yaw -= (t.clientX - lookLastX) * TOUCH_SENS;
+          pitch -= (t.clientY - lookLastY) * TOUCH_SENS;
+          var lim = Math.PI/2 - 0.05;
+          if(pitch > lim) pitch = lim;
+          if(pitch < -lim) pitch = -lim;
+        }
+        lookLastX = t.clientX; lookLastY = t.clientY; used = true;
+      }
+    }
+    if(used) e.preventDefault();
+  }, { passive:false });
+  function endTouches(e){
+    for(var i = 0; i < e.changedTouches.length; i++){
+      var id = e.changedTouches[i].identifier;
+      if(id === joyId) resetJoy();
+      if(id === lookId) lookId = null;
+    }
+  }
+  document.addEventListener('touchend', endTouches);
+  document.addEventListener('touchcancel', endTouches);
+  touchActBtn.addEventListener('click', function(){
+    if(locked && playing && !taskPanelOpen) doInteract();
+  });
+  document.getElementById('touchTaskBtn').addEventListener('click', function(){
+    if(playing && !taskPanelOpen) openCurrentTask();
+  });
+  function enterFullscreen(){
+    var el = document.documentElement;
+    var f = el.requestFullscreen || el.webkitRequestFullscreen;
+    if(!f) return;
+    try{ var pr = f.call(el); if(pr && pr.catch) pr.catch(function(){}); }catch(err){}
   }
 
   var ANSWER_ORDER = ['kitchen','living','pantry','hall','bedroom'];
@@ -2489,7 +2616,13 @@
     playing = true;
     document.getElementById('hud').classList.add('on');
     document.getElementById('minimap').classList.add('on');
-    canvas.requestPointerLock();
+    if(touchMode){
+      locked = true;
+      touchUI.hidden = false;
+      enterFullscreen();
+    } else {
+      canvas.requestPointerLock();
+    }
     getAudioCtx(); // unlock audio within this user gesture
   });
   closeTaskBtn.addEventListener('click', closeTaskPanel);
@@ -2549,12 +2682,15 @@
     if(locked && playing && !taskPanelOpen){
       var fwd = (keys['KeyW']||keys['ArrowUp'] ? 1:0) - (keys['KeyS']||keys['ArrowDown'] ? 1:0);
       var strafe = (keys['KeyD']||keys['ArrowRight'] ? 1:0) - (keys['KeyA']||keys['ArrowLeft'] ? 1:0);
+      var analog = 1;
+      var joyLen = Math.sqrt(joyX*joyX + joyY*joyY);
+      if(joyLen > 0.12){ fwd = -joyY; strafe = joyX; analog = Math.min(1, joyLen); }
       if(fwd !== 0 || strafe !== 0){
         var fx = -Math.sin(yaw), fz = -Math.cos(yaw);
         var rx = Math.cos(yaw), rz = -Math.sin(yaw);
         var mx = fx*fwd + rx*strafe, mz = fz*fwd + rz*strafe;
         var mlen = Math.sqrt(mx*mx+mz*mz) || 1;
-        var speed = (keys['ShiftLeft']||keys['ShiftRight']) ? SPRINT : WALK;
+        var speed = ((keys['ShiftLeft']||keys['ShiftRight']) ? SPRINT : WALK) * analog;
         mx = mx/mlen*speed*dt; mz = mz/mlen*speed*dt;
         px += mx; pz += mz;
         resolveCollisions();
