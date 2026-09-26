@@ -809,10 +809,20 @@
     var s = 256;
     var c = document.createElement('canvas'); c.width=s; c.height=s;
     var ctx = c.getContext('2d');
-    ctx.fillStyle = '#f4f0e6';
+    // one floor cell = one light ceramic tile: soft gradient, a faint bevel just inside
+    // the grout, and a bold grout line on all four edges (tiles seamlessly, and the
+    // cell edges stay easy to count)
+    var g = ctx.createLinearGradient(0, 0, s, s);
+    g.addColorStop(0, '#f7f3eb');
+    g.addColorStop(1, '#ece6db');
+    ctx.fillStyle = g;
     ctx.fillRect(0,0,s,s);
-    // bold cell grid, drawn on all four edges so it tiles seamlessly
-    ctx.strokeStyle = '#63594a';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';   // light bevel, top/left
+    ctx.beginPath(); ctx.moveTo(8, s-8); ctx.lineTo(8, 8); ctx.lineTo(s-8, 8); ctx.stroke();
+    ctx.strokeStyle = 'rgba(90,80,65,0.14)';     // shade bevel, bottom/right
+    ctx.beginPath(); ctx.moveTo(s-8, 8); ctx.lineTo(s-8, s-8); ctx.lineTo(8, s-8); ctx.stroke();
+    ctx.strokeStyle = '#6f675a';                 // grout
     ctx.lineWidth = 12;
     ctx.strokeRect(0,0,s,s);
     var tex = new THREE.CanvasTexture(c);
@@ -1316,6 +1326,106 @@
     group.add(mesh);
   }
 
+  // Baseboards along every wall side that faces a walkable area (door gaps are
+  // already excluded from the wall list). Plain boxes — merged later into one mesh.
+  var baseboardMat = new THREE.MeshLambertMaterial({ color:0x7a4a26 }); // same wood as the door frames
+  function addBaseboards(group, walls, walkable){
+    var H = 0.07, D = 0.014;
+    walls.forEach(function(w){
+      if(w.topOnly) return;
+      [-1, 1].forEach(function(side){
+        var face = w.fixed + side*WALL_T/2;
+        var mid = (w.from + w.to)/2, len = w.to - w.from;
+        var ok = w.axis === 'h' ? walkable(mid, face + side*0.1) : walkable(face + side*0.1, mid);
+        if(!ok || len < 0.05) return;
+        var m = new THREE.Mesh(
+          w.axis === 'h' ? new THREE.BoxGeometry(len, H, D) : new THREE.BoxGeometry(D, H, len),
+          baseboardMat);
+        if(w.axis === 'h') m.position.set(mid, H/2, face + side*D/2);
+        else m.position.set(face + side*D/2, H/2, mid);
+        group.add(m);
+      });
+    });
+  }
+
+  // White window frame (sides, top, bottom, a centre mullion on wide windows) and a sill
+  var windowFrameMat = new THREE.MeshLambertMaterial({ color:0x68655f });
+  function addWindowFrame(group, cut){
+    var a = cut.from*CELL, b = cut.to*CELL, f = cut.fixed*CELL;
+    var y0 = cut.yFrom, y1 = cut.yTo, T = 0.05, D = WALL_T + 0.05;
+    function bar(t0, t1, yA, yB, depth){
+      var len = t1 - t0, h = yB - yA;
+      var m = new THREE.Mesh(
+        cut.axis === 'h' ? new THREE.BoxGeometry(len, h, depth) : new THREE.BoxGeometry(depth, h, len),
+        windowFrameMat);
+      var tm = (t0 + t1)/2, ym = (yA + yB)/2;
+      if(cut.axis === 'h') m.position.set(tm, ym, f); else m.position.set(f, ym, tm);
+      group.add(m);
+    }
+    bar(a, a+T, y0, y1, D);           // left
+    bar(b-T, b, y0, y1, D);           // right
+    bar(a, b, y1-T, y1, D);           // top
+    bar(a, b, y0, y0+T, D);           // bottom
+    if(b - a > 0.9) bar((a+b)/2 - T/2, (a+b)/2 + T/2, y0, y1, D); // mullion
+    bar(a - 0.05, b + 0.05, y0 - 0.03, y0, WALL_T + 0.22);         // sill, sticks out both sides
+  }
+
+  // Each room gets its own soft wall tint. The tints are deliberately not
+  // "room-type" colours (no kitchen yellow, no bathroom blue) — task 1 is about
+  // telling the rooms apart from the text, so the paint must not give it away.
+  var ROOM_TINTS = {
+    1: [1.06, 1.02, 0.92],  // sand
+    2: [1.04, 1.02, 0.97],  // warm white
+    3: [1.00, 0.96, 1.07],  // lilac
+    4: [0.95, 1.00, 1.08],  // sky
+    5: [0.97, 1.04, 0.95],  // sage
+    6: [1.08, 0.98, 0.92],  // peach
+    7: [0.95, 1.05, 1.00]   // mint
+  };
+  // colours the merged wall mesh face by face: each face takes the tint of the
+  // room it faces (corridor and outside faces stay neutral)
+  function tintWalls(group, v){
+    var base = new THREE.Color(0x4a4944);
+    var mesh = null;
+    group.children.forEach(function(m){ if(m.isMesh && m.material === wallMat) mesh = m; });
+    if(!mesh) return;
+    var pos = mesh.geometry.attributes.position, nor = mesh.geometry.attributes.normal;
+    var col = new Float32Array(pos.count * 3);
+    function tintAt(x, z){
+      var cx = x / CELL, cz = z / CELL;
+      for(var i = 0; i < v.rooms.length; i++){
+        var r = v.rooms[i];
+        if(cx > r.x0 && cx < r.x1 && cz > r.y0 && cz < r.y1) return ROOM_TINTS[r.num] || [1,1,1];
+      }
+      return [1, 1, 1];
+    }
+    // BoxGeometry faces are 4 consecutive vertices, and merging kept that order
+    for(var f = 0; f + 3 < pos.count; f += 4){
+      var x = 0, z = 0;
+      for(var k = 0; k < 4; k++){ x += pos.getX(f+k); z += pos.getZ(f+k); }
+      x = x/4 + nor.getX(f)*0.1; z = z/4 + nor.getZ(f)*0.1;
+      var t = tintAt(x, z);
+      for(k = 0; k < 4; k++){
+        col[(f+k)*3]   = base.r * t[0];
+        col[(f+k)*3+1] = base.g * t[1];
+        col[(f+k)*3+2] = base.b * t[2];
+      }
+    }
+    mesh.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    wallMat.vertexColors = true;
+    wallMat.color.set(0xffffff);
+    wallMat.needsUpdate = true;
+  }
+
+  // Round ceiling lamp shade — unlit and bright so it reads as a light source
+  var lampMat = new THREE.MeshBasicMaterial({ color:0xfff4e2, toneMapped:false });
+  var lampGeo = new THREE.CylinderGeometry(0.2, 0.22, 0.05, 28);
+  function addLamp(group, x, z){
+    var m = new THREE.Mesh(lampGeo.clone(), lampMat);
+    m.position.set(x, WALL_H - 0.025, z);
+    group.add(m);
+  }
+
   function buildScene(v){
     var built = buildWallSegments(v);
     var group = new THREE.Group();
@@ -1541,6 +1651,7 @@
         var lz = nearZ + corridorLen * (ci+1)/(corridorLightCount+1);
         var stubLight = new THREE.PointLight(0xdfe6f2, 0.75, 8, 2);
         stubLight.position.set(stubCX, WALL_H-0.3, lz);
+        addLamp(group, stubCX, lz);
         group.add(stubLight);
       }
 
@@ -1622,6 +1733,7 @@
     // number sprites + room lights
     v.rooms.forEach(function(r){
       var cx = (r.x0+r.x1)/2*CELL, cz = (r.y0+r.y1)/2*CELL;
+      addLamp(group, cx, cz);
 
       if(!r.noDecal){
         var decalSize = Math.max(0.5, Math.min((r.x1-r.x0)*CELL, (r.y1-r.y0)*CELL) * 0.7, 0);
@@ -1661,6 +1773,7 @@
       }
       wMesh.renderOrder = 2;
       group.add(wMesh);
+      addWindowFrame(group, cut);
     });
 
     // a few simple distant silhouettes beyond the north-facing exterior
@@ -1705,12 +1818,15 @@
       aoWalls.push({ axis:'v', fixed:stub.x1, from:stub.z0, to:stub.z1 });
       aoWalls.push({ axis:'h', fixed:stub.z1, from:stub.x0, to:stub.x1 });
     }
-    addCornerShading(group, aoWalls, function(x, z){
+    function walkable(x, z){
       if(x > 0 && x < v.gridW*CELL && z > 0 && z < v.gridH*CELL) return true;
       return !!stub && x > stub.x0 && x < stub.x1 && z > stub.z0 && z < stub.z1;
-    });
+    }
+    addCornerShading(group, aoWalls, walkable);
+    addBaseboards(group, aoWalls, walkable);
 
     mergeStaticMeshes(group);
+    tintWalls(group, v);
     scene.add(group);
 
     // bumped up a bit to compensate for the smaller rooms no longer getting their own
