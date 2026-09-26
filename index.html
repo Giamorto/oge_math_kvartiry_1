@@ -1525,6 +1525,22 @@
       qr.position.set(sL + WALL_T/2 + 0.02, 1.45, nearZ + 0.15 + 1.8 + 0.25 + 0.35);
       qr.rotation.y = Math.PI/2;
       group.add(qr);
+
+      // caption card right under the QR
+      var captionTex = makeCanvasTexture(1000, 360, function(ctx, W, H){
+        ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 12);
+        ctx.fillStyle = TEX_INK;
+        ctx.font = '600 50px ' + TEX_FONT;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        drawWrapped(ctx, 'Автор — репетитор по математике Александр Халявин, приглашаю в работу для победы над ОГЭ)',
+          W/2, 48, W-80, 68);
+      });
+      var captionMat = new THREE.MeshBasicMaterial({ map:captionTex, side:THREE.DoubleSide, fog:false, toneMapped:false });
+      var caption = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.324), captionMat);
+      caption.position.set(qr.position.x, 1.45 - 0.4 - 0.05 - 0.162, qr.position.z);
+      caption.rotation.y = Math.PI/2;
+      group.add(caption);
     }
 
     // number sprites + room lights
