@@ -1508,7 +1508,17 @@
 
     // builds one solid wall box over [from,to] x [yFrom,yTo] — the piece
     // size shrinks to fit around any window cutout in the segment below
+    // walls are built from one-cell-long pieces: a long wall can border different rooms
+    // along its length, and each piece is later tinted by the room it faces (room
+    // borders always fall on cell lines) — one long box would paint the whole side
+    // in a single room's colour
     function addWallBox(axis, fixed, from, to, yFrom, yTo){
+      if(to - from > 1.001){
+        for(var t = from; t < to - 0.001; t = Math.min(to, Math.floor(t + 1e-6) + 1)){
+          addWallBox(axis, fixed, t, Math.min(to, Math.floor(t + 1e-6) + 1), yFrom, yTo);
+        }
+        return;
+      }
       var len = (to - from) * CELL, h = yTo - yFrom;
       if(len <= 0.001 || h <= 0.001) return;
       var geo, mesh;
@@ -1566,14 +1576,17 @@
     var interiorFrameDepth = WALL_T + 0.06;
     function addInteriorDoorFrame(axis, fixedCell, dsCell, deCell){
       var fixedPos = fixedCell*CELL, a = dsCell*CELL, b = deCell*CELL;
+      // jamb centres sit half a jamb inside the opening, so a doorway that starts
+      // right at a corner doesn't poke its jamb through the perpendicular wall
+      var ja = a + interiorJambW/2, jb = b - interiorJambW/2;
       var jambGeo, headerGeo, lintelGeo;
       if(axis === 'h'){
         jambGeo = new THREE.BoxGeometry(interiorJambW, interiorDoorH, interiorFrameDepth);
-        headerGeo = new THREE.BoxGeometry((b-a)+interiorJambW, 0.1, interiorFrameDepth);
+        headerGeo = new THREE.BoxGeometry(b-a, 0.1, interiorFrameDepth);
         lintelGeo = new THREE.BoxGeometry(b-a, WALL_H-interiorDoorH, WALL_T);
       } else {
         jambGeo = new THREE.BoxGeometry(interiorFrameDepth, interiorDoorH, interiorJambW);
-        headerGeo = new THREE.BoxGeometry(interiorFrameDepth, 0.1, (b-a)+interiorJambW);
+        headerGeo = new THREE.BoxGeometry(interiorFrameDepth, 0.1, b-a);
         lintelGeo = new THREE.BoxGeometry(WALL_T, WALL_H-interiorDoorH, b-a);
       }
       var jambL = new THREE.Mesh(jambGeo, interiorDoorMat);
@@ -1581,13 +1594,13 @@
       var header = new THREE.Mesh(headerGeo, interiorDoorMat);
       var lintel = new THREE.Mesh(lintelGeo, wallMat); // fills the wall above the frame up to the ceiling (visual only)
       if(axis === 'h'){
-        jambL.position.set(a, interiorDoorH/2, fixedPos);
-        jambR.position.set(b, interiorDoorH/2, fixedPos);
+        jambL.position.set(ja, interiorDoorH/2, fixedPos);
+        jambR.position.set(jb, interiorDoorH/2, fixedPos);
         header.position.set((a+b)/2, interiorDoorH, fixedPos);
         lintel.position.set((a+b)/2, interiorDoorH+(WALL_H-interiorDoorH)/2, fixedPos);
       } else {
-        jambL.position.set(fixedPos, interiorDoorH/2, a);
-        jambR.position.set(fixedPos, interiorDoorH/2, b);
+        jambL.position.set(fixedPos, interiorDoorH/2, ja);
+        jambR.position.set(fixedPos, interiorDoorH/2, jb);
         header.position.set(fixedPos, interiorDoorH, (a+b)/2);
         lintel.position.set(fixedPos, interiorDoorH+(WALL_H-interiorDoorH)/2, (a+b)/2);
       }
