@@ -121,18 +121,19 @@
   #interactPrompt.on, #resumeHint.on{ opacity:1; }
   /* permanent "how to open the task" hint, a bit lower than the E-prompt */
   #escHint{
-    position:absolute; top:calc(50% + 136px); left:50%; transform:translateX(-50%);
-    font-family:var(--font-ui); font-size:26px; font-weight:500;
+    /* half the size of the other hints, 10% of the screen height lower */
+    position:absolute; top:calc(60% + 136px); left:50%; transform:translateX(-50%);
+    font-family:var(--font-ui); font-size:13px; font-weight:500;
     background:var(--hud); color:var(--hud-ink);
-    border:2px solid rgba(255,255,255,.1);
-    border-radius:24px; padding:14px 26px; white-space:nowrap;
+    border:1px solid rgba(255,255,255,.1);
+    border-radius:12px; padding:7px 13px; white-space:nowrap;
     backdrop-filter:blur(8px);
     pointer-events:none; opacity:0; transition:opacity .2s;
   }
   #escHint.on{ opacity:.85; }
-  #escHint kbd{ margin-left:8px; }
+  #escHint kbd{ margin-left:4px; }
   #interactPrompt kbd{ margin:0 12px; }
-  #escHint kbd, #interactPrompt kbd{ border-radius:12px; padding:0 12px; box-shadow:inset 0 -4px 0 var(--marker-deep); }
+  #interactPrompt kbd{ border-radius:12px; padding:0 12px; box-shadow:inset 0 -4px 0 var(--marker-deep); }
 
   #toast{
     /* above the centre: at 2× size it would collide with the bottom HUD on shorter screens */
