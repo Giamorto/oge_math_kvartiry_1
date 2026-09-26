@@ -771,16 +771,66 @@
     var tex = new THREE.CanvasTexture(c);
     tex.encoding = THREE.sRGBEncoding;
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tex.redraw = function(){
+      ctx.clearRect(0, 0, W, H);
+      draw(ctx, W, H);
+      tex.needsUpdate = true;
+      needsRender = true;
+    };
     if(document.fonts && document.fonts.load){
       Promise.all([document.fonts.load('700 40px Onest'), document.fonts.load('600 40px Onest')])
-        .then(function(){
-          ctx.clearRect(0, 0, W, H);
-          draw(ctx, W, H);
-          tex.needsUpdate = true;
-          needsRender = true;
-        })
+        .then(tex.redraw)
         .catch(function(){});
     }
+    return tex;
+  }
+
+  // wraps text to maxW and draws it line by line from y; returns the y after the last line
+  function drawWrapped(ctx, text, x, y, maxW, lineH){
+    var words = text.split(' '), line = '';
+    words.forEach(function(w){
+      var test = line ? line + ' ' + w : w;
+      if(ctx.measureText(test).width > maxW && line){
+        ctx.fillText(line, x, y); y += lineH; line = w;
+      } else {
+        line = test;
+      }
+    });
+    if(line){ ctx.fillText(line, x, y); y += lineH; }
+    return y;
+  }
+
+  // Task 1 board by the entrance: the same plan + question/table pictures as the
+  // task window, plus the condition text between them
+  function makeTask1BoardTexture(planSrc, tableSrc, clue){
+    var plan = new Image(), table = new Image();
+    var tex = makeCanvasTexture(2000, 1700, function(ctx, W, H){
+      ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 150);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 88px ' + TEX_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('ЗАДАЧА 1', W/2, 78);
+      var y = 190;
+      var planW = 1500, planH = Math.round(planW * 484/921);
+      if(plan.complete && plan.naturalWidth){
+        planH = Math.round(planW * plan.naturalHeight/plan.naturalWidth);
+        ctx.drawImage(plan, (W-planW)/2, y, planW, planH);
+      }
+      y += planH + 50;
+      ctx.fillStyle = TEX_INK;
+      ctx.font = '500 48px ' + TEX_FONT;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      y = drawWrapped(ctx, clue, 70, y, W-140, 64) + 30;
+      if(table.complete && table.naturalWidth){
+        var tW = 1500, tH = Math.round(tW * table.naturalHeight/table.naturalWidth);
+        ctx.drawImage(table, (W-tW)/2, y, tW, tH);
+      }
+      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, H-14, W, 14);
+    });
+    plan.onload = table.onload = tex.redraw;
+    plan.src = planSrc;
+    table.src = tableSrc;
     return tex;
   }
 
@@ -1292,6 +1342,18 @@
       var cellPlaqueX = (dx1 + sR)/2; // centred in the wall nook between the door and the corner
       cellPlaque.position.set(cellPlaqueX, EYE_H, nearZ + WALL_T/2 + 0.02);
       group.add(cellPlaque);
+
+      // task 1 board on the left corridor wall right before the front door (the nooks
+      // either side of the door are only 0.4 m wide) — seen on the left while walking in
+      var boardTex = makeTask1BoardTexture(
+        document.querySelector('#task2Overlay .task-plan-img').src,
+        document.querySelector('#taskPanel .task-table-img').src,
+        v.clue);
+      var boardMat = new THREE.MeshBasicMaterial({ map:boardTex, side:THREE.DoubleSide, fog:false, toneMapped:false });
+      var board = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.53), boardMat);
+      board.position.set(sL + WALL_T/2 + 0.02, 1.45, nearZ + 0.15 + 0.9); // ~0.7–2.2 m high: fits the view from across the 1.6 m corridor
+      board.rotation.y = Math.PI/2; // faces into the corridor (+x)
+      group.add(board);
     }
 
     // number sprites + room lights
