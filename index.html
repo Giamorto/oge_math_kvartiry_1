@@ -1187,6 +1187,58 @@
     });
   }
 
+  // Soft corner shading (a cheap stand-in for ambient occlusion): along every wall,
+  // on each side that faces a walkable area, gradient strips darken the floor and the
+  // ceiling next to the wall and the bottom/top of the wall itself. Where two walls
+  // meet the strips overlap, so corners come out a bit darker — as in a real room.
+  // Everything is one mesh with one tiny gradient texture.
+  function addCornerShading(group, walls, walkable){
+    var c = document.createElement('canvas'); c.width = 4; c.height = 128;
+    var ctx = c.getContext('2d');
+    var g = ctx.createLinearGradient(0, c.height, 0, 0); // canvas bottom = v 0 = at the joint
+    g.addColorStop(0,    'rgba(28,22,14,0.55)');
+    g.addColorStop(0.25, 'rgba(28,22,14,0.28)');
+    g.addColorStop(0.6,  'rgba(28,22,14,0.08)');
+    g.addColorStop(1,    'rgba(28,22,14,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    var tex = new THREE.CanvasTexture(c);
+
+    var FLOOR_W = 0.4, CEIL_W = 0.35, WALL_LOW = 0.38, WALL_HIGH = 0.32;
+    var pos = [], uv = [], idx = [];
+    function quad(pts, vs){
+      var b = pos.length/3;
+      pts.forEach(function(p, i){ pos.push(p[0], p[1], p[2]); uv.push(0.5, vs[i]); });
+      idx.push(b, b+1, b+2, b, b+2, b+3);
+    }
+    walls.forEach(function(w){
+      [-1, 1].forEach(function(side){
+        var face = w.fixed + side*WALL_T/2;
+        var mid = (w.from + w.to)/2;
+        var ok = w.axis === 'h' ? walkable(mid, face + side*0.1) : walkable(face + side*0.1, mid);
+        if(!ok) return;
+        // point at distance o from the wall face, at height y, t along the wall
+        var P = w.axis === 'h'
+          ? function(t, y, o){ return [t, y, face + side*o]; }
+          : function(t, y, o){ return [face + side*o, y, t]; };
+        var a = w.from, b = w.to;
+        if(!w.topOnly){ // door openings have wall only above them — no floor/bottom strips there
+          quad([P(a, 0.004, 0), P(b, 0.004, 0), P(b, 0.004, FLOOR_W), P(a, 0.004, FLOOR_W)], [0, 0, 1, 1]);
+          quad([P(a, 0, 0.003), P(b, 0, 0.003), P(b, WALL_LOW, 0.003), P(a, WALL_LOW, 0.003)], [0, 0, 1, 1]);
+        }
+        quad([P(a, WALL_H-0.004, 0), P(b, WALL_H-0.004, 0), P(b, WALL_H-0.004, CEIL_W), P(a, WALL_H-0.004, CEIL_W)], [0, 0, 1, 1]);
+        quad([P(a, WALL_H, 0.003), P(b, WALL_H, 0.003), P(b, WALL_H-WALL_HIGH, 0.003), P(a, WALL_H-WALL_HIGH, 0.003)], [0, 0, 1, 1]);
+      });
+    });
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    var mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, side:THREE.DoubleSide, toneMapped:false });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 1; // before window glass (2), after opaque surfaces
+    group.add(mesh);
+  }
+
   function buildScene(v){
     var built = buildWallSegments(v);
     var group = new THREE.Group();
@@ -1527,6 +1579,29 @@
         scene.add(mesh);
       });
     })();
+
+    // corner shading along every wall of the flat and of the entrance corridor
+    var aoWalls = built.segs.map(function(sg){
+      return { axis:sg.axis, fixed:sg.fixed*CELL, from:sg.from*CELL, to:sg.to*CELL };
+    });
+    // above every doorway there's wall up to the ceiling, so the ceiling-side shading
+    // continues across it (otherwise a light notch shows over each door)
+    built.doorGaps.forEach(function(g){
+      aoWalls.push({ axis:g.axis, fixed:g.fixed*CELL, from:g.ds*CELL, to:g.de*CELL, topOnly:true });
+    });
+    var stub = null;
+    if(v.entrance){
+      aoWalls.push({ axis:'h', fixed:v.gridH*CELL, from:v.entrance.doorX0*CELL, to:v.entrance.doorX1*CELL, topOnly:true });
+      stub = { x0:v.entrance.stubLeft*CELL, x1:v.entrance.stubRight*CELL,
+               z0:v.gridH*CELL, z1:v.gridH*CELL + v.entrance.stubDepth*CELL };
+      aoWalls.push({ axis:'v', fixed:stub.x0, from:stub.z0, to:stub.z1 });
+      aoWalls.push({ axis:'v', fixed:stub.x1, from:stub.z0, to:stub.z1 });
+      aoWalls.push({ axis:'h', fixed:stub.z1, from:stub.x0, to:stub.x1 });
+    }
+    addCornerShading(group, aoWalls, function(x, z){
+      if(x > 0 && x < v.gridW*CELL && z > 0 && z < v.gridH*CELL) return true;
+      return !!stub && x > stub.x0 && x < stub.x1 && z > stub.z0 && z < stub.z1;
+    });
 
     mergeStaticMeshes(group);
     scene.add(group);
