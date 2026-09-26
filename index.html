@@ -804,39 +804,138 @@
     return y;
   }
 
-  // Task 1 board by the entrance: the same plan + question/table pictures as the
-  // task window, plus the condition text between them
-  function makeTask1BoardTexture(planSrc, tableSrc, clue){
-    var plan = new Image(), table = new Image();
+  // Task board on a wall, same look for every task: blue "ЗАДАЧА N" header, then any of
+  // plan picture → text → picture under it (task 1's question/table) → drawn table →
+  // text after the table. spec: { title, planSrc, paragraphs, imageBelowSrc, table, after }
+  function makeTaskBoardTexture(spec){
+    var imgs = {};
+    ['planSrc', 'imageBelowSrc'].forEach(function(k){
+      if(spec[k]){ imgs[k] = new Image(); }
+    });
+    function imgReady(k){ return imgs[k] && imgs[k].complete && imgs[k].naturalWidth; }
     var tex = makeCanvasTexture(2000, 1700, function(ctx, W, H){
       ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 150);
       ctx.fillStyle = '#fff';
       ctx.font = '700 88px ' + TEX_FONT;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('ЗАДАЧА 1', W/2, 78);
+      ctx.fillText(spec.title.toUpperCase(), W/2, 78);
       var y = 190;
-      var planW = 1500, planH = Math.round(planW * 484/921);
-      if(plan.complete && plan.naturalWidth){
-        planH = Math.round(planW * plan.naturalHeight/plan.naturalWidth);
-        ctx.drawImage(plan, (W-planW)/2, y, planW, planH);
+      if(spec.planSrc){
+        var planW = 1500, planH = Math.round(planW * 484/921);
+        if(imgReady('planSrc')){
+          planH = Math.round(planW * imgs.planSrc.naturalHeight/imgs.planSrc.naturalWidth);
+          ctx.drawImage(imgs.planSrc, (W-planW)/2, y, planW, planH);
+        }
+        y += planH + 50;
       }
-      y += planH + 50;
       ctx.fillStyle = TEX_INK;
-      ctx.font = '500 48px ' + TEX_FONT;
+      ctx.font = '500 ' + (spec.planSrc ? 48 : 52) + 'px ' + TEX_FONT;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      y = drawWrapped(ctx, clue, 70, y, W-140, 64) + 30;
-      if(table.complete && table.naturalWidth){
-        var tW = 1500, tH = Math.round(tW * table.naturalHeight/table.naturalWidth);
-        ctx.drawImage(table, (W-tW)/2, y, tW, tH);
+      (spec.paragraphs || []).forEach(function(par){
+        y = drawWrapped(ctx, par, 70, y, W-140, spec.planSrc ? 64 : 70) + 18;
+      });
+      y += 12;
+      if(imgReady('imageBelowSrc')){
+        var im = imgs.imageBelowSrc;
+        var tW = 1500, tH = Math.round(tW * im.naturalHeight/im.naturalWidth);
+        ctx.drawImage(im, (W-tW)/2, y, tW, tH);
+        y += tH + 30;
       }
+      if(spec.table){ y = drawBoardTable(ctx, spec.table, 70, y, W-140) + 34; }
+      ctx.fillStyle = TEX_INK;
+      ctx.font = '600 52px ' + TEX_FONT;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      (spec.after || []).forEach(function(par){
+        y = drawWrapped(ctx, par, 70, y, W-140, 70) + 18;
+      });
       ctx.fillStyle = TEX_PEN; ctx.fillRect(0, H-14, W, 14);
     });
-    plan.onload = table.onload = tex.redraw;
-    plan.src = planSrc;
-    table.src = tableSrc;
+    Object.keys(imgs).forEach(function(k){
+      imgs[k].onload = tex.redraw;
+      imgs[k].src = spec[k];
+    });
     return tex;
   }
+
+  // simple ruled table: header cells may have several lines; columns sized to content
+  function drawBoardTable(ctx, table, x, y, maxW){
+    // shrink the fonts until the natural column widths fit, so no text spills out of
+    // its cell; then spread the leftover width over the columns
+    var headPx = 36, cellPx = 40, headFont, cellFont, widths, total, c;
+    var pad = 14, rowH = 68, headLineH = 42;
+    var cols = table.head.length;
+    do {
+      headFont = '600 ' + headPx + 'px ' + TEX_FONT;
+      cellFont = '500 ' + cellPx + 'px ' + TEX_FONT;
+      widths = [];
+      for(c = 0; c < cols; c++){
+        ctx.font = headFont;
+        var w = 0;
+        table.head[c].forEach(function(l){ w = Math.max(w, ctx.measureText(l).width); });
+        ctx.font = cellFont;
+        table.rows.forEach(function(r){ w = Math.max(w, ctx.measureText(r[c]).width); });
+        widths.push(w + pad*2);
+      }
+      total = widths.reduce(function(a, b){ return a + b; }, 0);
+      if(total <= maxW) break;
+      headPx -= 2; cellPx -= 2;
+    } while(headPx > 20);
+    headLineH = Math.round(headPx * 1.2);
+    var extra = (maxW - total) / cols;
+    widths = widths.map(function(w){ return w + extra; });
+    var headLines = Math.max.apply(null, table.head.map(function(h){ return h.length; }));
+    var headH = headLines*headLineH + pad*2;
+    var bodyH = table.rows.length * rowH;
+    ctx.fillStyle = '#eef1f8'; ctx.fillRect(x, y, maxW, headH);
+    ctx.textAlign = 'center';
+    var cx = x;
+    for(c = 0; c < cols; c++){
+      var mid = cx + widths[c]/2;
+      ctx.fillStyle = '#2c313b'; ctx.font = headFont; ctx.textBaseline = 'top';
+      var hy = y + headH - pad - table.head[c].length*headLineH + 4;
+      table.head[c].forEach(function(l){ ctx.fillText(l, mid, hy); hy += headLineH; });
+      ctx.fillStyle = TEX_INK; ctx.font = cellFont; ctx.textBaseline = 'middle';
+      table.rows.forEach(function(r, ri){ ctx.fillText(r[c], mid, y + headH + ri*rowH + rowH/2 + 2); });
+      cx += widths[c];
+    }
+    ctx.strokeStyle = '#c7ccd6'; ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, maxW, headH + bodyH);
+    ctx.beginPath();
+    cx = x;
+    for(c = 0; c < cols - 1; c++){ cx += widths[c]; ctx.moveTo(cx, y); ctx.lineTo(cx, y + headH + bodyH); }
+    for(var ri = 0; ri <= table.rows.length; ri++){ var ly = y + headH + ri*rowH; ctx.moveTo(x, ly); ctx.lineTo(x + maxW, ly); }
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    return y + headH + bodyH;
+  }
+
+  // board spec for tasks 3-5, read straight from the task's HTML so the wall and the
+  // task window always say the same thing (paragraphs before/after a table, the table)
+  function extraTaskBoardSpec(t, planSrc){
+    var box = document.createElement('div');
+    box.innerHTML = t.html;
+    var spec = { title: t.title, paragraphs: [], after: [] };
+    var tableEl = box.querySelector('table');
+    Array.prototype.forEach.call(box.children, function(el){
+      if(el.tagName === 'P'){ (spec.table ? spec.after : spec.paragraphs).push(el.textContent.trim()); }
+      else if(tableEl && el.contains(tableEl)){
+        spec.table = {
+          head: Array.prototype.map.call(tableEl.querySelectorAll('thead th'), function(th){
+            return th.innerHTML.split(/<br\s*\/?>/i).map(function(part){
+              var d = document.createElement('div'); d.innerHTML = part; return d.textContent.trim();
+            });
+          }),
+          rows: Array.prototype.map.call(tableEl.querySelectorAll('tbody tr'), function(tr){
+            return Array.prototype.map.call(tr.children, function(td){ return td.textContent.trim(); });
+          })
+        };
+      }
+    });
+    if(!spec.table) spec.planSrc = planSrc; // measuring tasks need the plan; the stove table doesn't
+    return spec;
+  }
+
 
   function roundRect(ctx, x, y, w, h, r){
     ctx.beginPath();
@@ -940,22 +1039,6 @@
     });
   }
 
-  // Wall sign for task 2: pen-blue header band, big ink text
-  function makeSignTexture(title, lines){
-    return makeCanvasTexture(1600, 1100, function(ctx, W, H){
-      ctx.fillStyle = TEX_PAPER; ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, 0, W, 210);
-      ctx.fillStyle = '#fff';
-      ctx.font = '700 104px ' + TEX_FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(title.toUpperCase(), W/2, 110);
-      ctx.fillStyle = TEX_INK;
-      ctx.font = '600 74px ' + TEX_FONT; // longest line must fit the 1600px board
-      var y = 390;
-      lines.forEach(function(line){ ctx.fillText(line, W/2, y); y += 140; });
-      ctx.fillStyle = TEX_PEN; ctx.fillRect(0, H-14, W, 14);
-    });
-  }
 
   // Pack of 10 tiles: kraft cardboard box, blue band, white label with a tile and "10 шт"
   function makePackSideTexture(){
@@ -1050,6 +1133,21 @@
   var tileSupplyRemaining = 0;
   var packSlots = [];
   var task2SignPos = null; // set once ensureTask2Scene() runs
+  var stageBoard = null;   // bedroom wall board: task 2, later 3, 4, 5
+
+  function planImageSrc(){ return document.querySelector('#task2Overlay .task-plan-img').src; }
+  function task2BoardSpec(){
+    return { title: 'Задача 2', planSrc: planImageSrc(), paragraphs: [TILE_TASK2_LINES.join(' ')] };
+  }
+  // swaps what the bedroom board shows (old texture is freed)
+  function showStageBoard(spec){
+    if(!stageBoard) return;
+    var old = stageBoard.material.map;
+    stageBoard.material.map = makeTaskBoardTexture(spec);
+    stageBoard.material.needsUpdate = true;
+    if(old) old.dispose();
+    needsRender = true;
+  }
 
   // PERF: walls, sills, lintels and door frames are dozens of separate boxes, each one
   // its own draw call. They never move and use flat-colour materials (no textures), so
@@ -1349,10 +1447,12 @@
 
       // task 1 board on the left corridor wall right before the front door (the nooks
       // either side of the door are only 0.4 m wide) — seen on the left while walking in
-      var boardTex = makeTask1BoardTexture(
-        document.querySelector('#task2Overlay .task-plan-img').src,
-        document.querySelector('#taskPanel .task-table-img').src,
-        v.clue);
+      var boardTex = makeTaskBoardTexture({
+        title: 'Задача 1',
+        planSrc: document.querySelector('#task2Overlay .task-plan-img').src,
+        paragraphs: [v.clue],
+        imageBelowSrc: document.querySelector('#taskPanel .task-table-img').src
+      });
       var boardMat = new THREE.MeshBasicMaterial({ map:boardTex, side:THREE.DoubleSide, fog:false, toneMapped:false });
       var board = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.53), boardMat);
       board.position.set(sL + WALL_T/2 + 0.02, 1.45, nearZ + 0.15 + 0.9); // ~0.7–2.2 m high: fits the view from across the 1.6 m corridor
@@ -1597,14 +1697,16 @@
     };
     placedTileCount = 0; // loggia starts bare — every tile comes from the ordered packs
 
-    var signTex = makeSignTexture('Задача 2', TILE_TASK2_LINES);
-    var signMat = new THREE.MeshBasicMaterial({ map:signTex, side:THREE.DoubleSide, fog:false, toneMapped:false }); // no ACES/fog: white paper stays white, ink stays black
-    var sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.1), signMat);
+    // stage board: shows task 2 now and is swapped to task 3, 4, 5 as the student
+    // moves on (see showStageBoard) — they're in the bedroom/loggia at that point
+    var signMat = new THREE.MeshBasicMaterial({ map:makeTaskBoardTexture(task2BoardSpec()), side:THREE.DoubleSide, fog:false, toneMapped:false }); // no ACES/fog: white paper stays white, ink stays black
+    var sign = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.7), signMat);
     var signX = bedroomRoom.x1*CELL - (WALL_T/2+0.02);
     var signZ = (bedroomRoom.y0+bedroomRoom.y1)/2*CELL;
-    sign.position.set(signX, 1.55, signZ);
+    sign.position.set(signX, 1.45, signZ);
     sign.rotation.y = -Math.PI/2; // faces back into the bedroom (was mirrored at +PI/2)
     scene.add(sign);
+    stageBoard = sign;
     task2SignPos = { x:signX, z:signZ };
 
     packSlots = buildPackSlots(bedroomRoom);
@@ -2045,6 +2147,7 @@
   function openExtraTask(i){
     currentExtraTaskIndex = i;
     var t = EXTRA_TASKS[i];
+    showStageBoard(extraTaskBoardSpec(t, planImageSrc()));
     extraTaskEyebrow.textContent = t.title;
     extraTaskBody.innerHTML = t.html;
     extraTaskInput.value = '';
