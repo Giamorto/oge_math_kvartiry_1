@@ -324,6 +324,7 @@
     border-radius:14px; background:#fff;
     box-shadow:0 0 0 1px var(--line), 0 10px 24px -16px rgba(17,24,48,.35);
   }
+  .task-plan-img[hidden]{ display:none; }
   .task-table-img{
     display:block; width:100%; max-width:640px; margin:-8px auto 16px;
     border-radius:0 0 14px 14px; background:#fff; padding:8px 10px;
@@ -2495,7 +2496,7 @@
       answer: 22, tolerance: 0.5
     },
     {
-      num: 5, id: '21062', title: 'Задача 5',
+      num: 5, id: '21062', title: 'Задача 5', noPlan: true, // stove table task — the flat plan isn't needed
       html:
         '<p>В квартире планируется заменить электрическую плиту. Характеристики электроплит, ' +
         'условия подключения и доставки приведены в таблице. Планируется купить электрическую ' +
@@ -2540,6 +2541,7 @@
     currentExtraTaskIndex = i;
     var t = EXTRA_TASKS[i];
     showStageBoard(extraTaskBoardSpec(t, planImageSrc()));
+    document.getElementById('extraPlanImg').hidden = !!t.noPlan;
     extraTaskEyebrow.textContent = t.title;
     extraTaskBody.innerHTML = t.html;
     extraTaskInput.value = '';
